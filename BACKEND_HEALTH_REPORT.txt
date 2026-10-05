@@ -1,0 +1,608 @@
+==================================================
+1. PROJECT OVERVIEW
+==================================================
+
+- Project Name: uber-backend-mvp (Uber-Style Ride-Hailing Backend MVP)
+- Backend Location: c:\Uber\backend
+- Current Architecture:
+  The backend follows a decoupled dual-pipeline architecture:
+  1. High-frequency Real-Time Location Pipeline: Driver GPS updates (emitted every 1-3 seconds) are ingested exclusively via WebSockets (Socket.IO), converted to Uber H3 resolution 8 hex cell indices, and indexed in Redis sets and hashes. High-frequency location updates are isolated from the relational database.
+  2. Low-frequency Relational Data & Lifecycle Pipeline: User authentication, driver profiles, ride lifecycle management, and final fare audits are handled over Express REST endpoints and persisted in PostgreSQL using Prisma ORM.
+  3. Embedded 7-Driver Simulator: Generates 7 simulated drivers (D2..D8) that feed into the exact same location update pipeline as the real driver (D1).
+- Current Tech Stack:
+  - Runtime: Node.js 25.6.0
+  - Language: TypeScript 5.7.3 (Target: ES2022, Module: NodeNext)
+  - HTTP Framework: Express 4.21.2
+  - Real-Time Protocol: Socket.IO 4.8.1
+  - Database: PostgreSQL 16 + PostGIS (Docker image: postgis/postgis:16-3.4)
+  - ORM: Prisma 5.22.0
+  - In-Memory / Live Cache: Redis 7 (ioredis 5.4.2) with custom MemoryRedis fallback store
+  - Geospatial Indexing: Uber H3 (h3-js 4.2.0, resolution 8)
+  - Validation: Zod 3.24.2
+  - Security / Auth: JSON Web Tokens (jsonwebtoken 9.0.2), bcryptjs 2.4.3
+  - Testing: Jest 29.7.0, Supertest 7.0.0, ts-jest 29.2.5
+- What the Backend is Intended to Do:
+  - Serve a college demonstration project (target deadline: Oct 10) supporting 1 real rider, 1 real driver (phone GPS), and 7 simulated drivers.
+  - Ingest real-time driver coordinates and maintain live spatial indexes.
+  - Find and rank the Top 8 nearest available candidate drivers for a ride request using H3 k-ring disk search and Haversine distance.
+  - Enforce ride lifecycle states (REQUESTED -> DRIVER_ASSIGNED -> DRIVER_ARRIVING -> DRIVER_ARRIVED -> IN_PROGRESS -> COMPLETED / CANCELLED).
+  - Calculate upfront and completed fares based on distance, time, and base minimums.
+
+==================================================
+2. FILE/FOLDER STRUCTURE
+==================================================
+
+c:\Uber\
+├── docs/
+│   ├── API.md                 # REST API route specifications and response formats
+│   ├── ARCHITECTURE.md        # System architecture, pipeline decoupling, and H3 strategy
+│   ├── DATABASE.md            # PostgreSQL table schema and Redis key design
+│   ├── DEVELOPMENT_STATUS.md  # Milestone progress and MVP priority checklist
+│   ├── MATCHING.md            # H3 matching algorithm, k-ring expansion, and ranking rules
+│   ├── PROJECT_CONTEXT.md     # Primary project goals, requirements, and constraints
+│   └── WEBSOCKET.md           # Socket.IO event payloads, contracts, and channels
+└── backend/
+    ├── .env                   # Environment variable values (ports, secrets, database URLs)
+    ├── .env.example           # Blueprint for environment variables
+    ├── docker-compose.yml     # Container definitions for PostgreSQL (PostGIS) and Redis
+    ├── package.json           # Node.js project manifest, dependencies, and lifecycle scripts
+    ├── tsconfig.json          # TypeScript compiler options
+    ├── jest.config.js         # Jest test configuration with ts-jest
+    ├── dist/                  # Compiled JavaScript output from TypeScript build
+    ├── prisma/
+    │   ├── schema.prisma      # Prisma schema (User, Driver, Vehicle, Ride models & enums)
+    │   └── seed.ts            # Database seed script for demo rider, real D1, and D2..D8 drivers
+    ├── simulator/
+    │   └── run.ts             # Standalone CLI runner script for the 7-driver simulator
+    ├── src/
+    │   ├── app.ts             # Express application initialization, CORS, and route mounting
+    │   ├── server.ts          # HTTP server creation, Socket.IO binding, and port listener
+    │   ├── config/
+    │   │   ├── env.ts         # Environment variable loader and type-safe fallbacks
+    │   │   ├── prisma.ts      # PrismaClient instance singleton
+    │   │   └── redis.ts       # ioredis client initialization with in-memory fallback class
+    │   ├── controllers/
+    │   │   ├── auth.controller.ts       # Registration and login HTTP handlers
+    │   │   ├── driver.controller.ts     # Driver profile, status, and nearby driver handlers
+    │   │   ├── ride.controller.ts       # Fare estimation and ride lifecycle action handlers
+    │   │   └── simulator.controller.ts  # Start, stop, and status control handlers for simulator
+    │   ├── middleware/
+    │   │   ├── auth.middleware.ts       # JWT bearer token verification middleware
+    │   │   └── error.middleware.ts      # Global error handling middleware for AppError and 500s
+    │   ├── routes/
+    │   │   ├── auth.routes.ts           # /api/v1/auth routes
+    │   │   ├── driver.routes.ts         # /api/v1/drivers routes
+    │   │   ├── ride.routes.ts           # /api/v1/rides routes
+    │   │   └── simulator.routes.ts      # /api/v1/simulator routes
+    │   ├── services/
+    │   │   ├── auth/auth.service.ts         # User creation, password hashing, JWT generation
+    │   │   ├── driver/driver.service.ts     # Driver queries, status updates, and Redis status sync
+    │   │   ├── fare/fare.service.ts         # Upfront and final fare calculations
+    │   │   ├── h3/h3.service.ts             # H3 cell conversions, k-ring disks, cell validation
+    │   │   ├── location/location.service.ts # Driver location updates, Redis spatial index sets
+    │   │   ├── matching/matching.service.ts # Expanding k-ring spatial lookup and Top 8 ranking
+    │   │   ├── ride/ride.service.ts         # Ride lifecycle operations and state transition checks
+    │   │   └── simulator/simulator.service.ts # 7-driver movement engine and periodic tick loop
+    │   ├── types/
+    │   │   └── index.ts                 # Shared TypeScript interfaces (DriverLocation, RideState, etc.)
+    │   ├── utils/
+    │   │   ├── appError.ts              # Custom AppError class with HTTP status codes
+    │   │   ├── geo.ts                   # Haversine distance formula and ETA estimation math
+    │   │   └── logger.ts                # Timestamped console logging utility
+    │   ├── validators/
+    │   │   ├── auth.validator.ts        # Zod schemas for registration and login
+    │   │   ├── driver.validator.ts      # Zod schemas for driver creation and status
+    │   │   ├── ride.validator.ts        # Zod schemas for ride creation and actions
+    │   │   └── websocket.validator.ts   # Zod schemas for inbound Socket.IO payloads
+    │   └── websocket/
+    │       └── socket.server.ts         # Socket.IO connection handling and event routing
+    └── tests/
+        ├── api.test.ts                  # REST API integration tests (health check, fare estimate)
+        ├── fare.test.ts                 # Fare calculation and Haversine distance unit tests
+        ├── h3_matching.test.ts          # H3 cell conversion and Top 8 ranking tests
+        └── ride_state.test.ts           # State machine transition validation tests
+
+==================================================
+3. IMPLEMENTATION STATUS
+==================================================
+
+Component            | Status             | Evidence                                              | Notes
+---------------------|--------------------|-------------------------------------------------------|--------------------------------------------------------
+Node.js              | WORKING            | Runtime v25.6.0 executes tsx, tsc, and test runners  | Host running Node.js v25.6.0
+TypeScript           | WORKING            | tsconfig.json; npx tsc --noEmit completes 0 errors   | Fully typed, ES2022/NodeNext config
+Express              | WORKING            | app.ts; /health endpoint tested, returns HTTP 200 OK  | Configured with CORS, JSON body parser, versioned routes
+PostgreSQL           | NOT WORKING        | Test-NetConnection to port 5432 fails (Connection refused) | Docker daemon is stopped; no active Postgres service
+PostGIS              | NOT IMPLEMENTED    | schema.prisma uses Float for lat/lng; no PostGIS types| Documented and in docker-compose, but not in Prisma schema
+Prisma               | PARTIALLY WORKING  | @prisma/client generated; fails to connect to DB      | Client generated; blocked at runtime by offline DB
+Redis                | PARTIALLY WORKING  | MemoryRedis works in test mode; fails in dev mode     | Docker Redis offline; dev mode error on offline stream
+H3                   | WORKING            | h3.service.ts; h3_matching.test.ts passes            | h3-js resolution 8 latLngToCell & gridDisk operational
+Socket.IO/WebSocket  | WORKING            | socket.server.ts; live socket client connects cleanly | Binds to port 3000; events registered and validated
+REST API             | WORKING            | app.ts, routes, controllers implemented               | Routes operational; DB-backed endpoints need Postgres
+Authentication       | PARTIALLY WORKING  | auth.service.ts (JWT + bcrypt); tested in isolation   | Works logically, but register/login require active DB
+Driver service       | PARTIALLY WORKING  | driver.service.ts implemented; DB calls need Postgres | Logic complete; line 12 has typo HTTP status code 444
+Rider service        | NOT IMPLEMENTED    | No dedicated rider.service.ts file                   | Rider operations handled via User model & ride.service.ts
+Location service     | WORKING            | location.service.ts; verified in unit tests           | Coordinates converted to H3, Redis hex sets updated
+Matching engine      | WORKING            | matching.service.ts; h3_matching.test.ts passes       | Expanding k-ring (k=0..4) + Haversine ranking Top 8
+Driver simulator     | PARTIALLY WORKING  | simulator.service.ts; runs in tests; fails in dev     | Movement math working; blocked in dev by Redis stream err
+Ride state machine   | WORKING            | ride.service.ts; ride_state.test.ts passes            | Valid state transitions enforced; invalid rejected
+Fare calculation     | WORKING            | fare.service.ts; fare.test.ts passes                  | Base ($2.50) + dist ($1.50/km) + time ($0.35/min)
+Error handling       | WORKING            | error.middleware.ts, appError.ts; tested in api.test  | Uniform JSON error response format implemented
+Validation           | WORKING            | Zod schemas in validators/; tested in api.test        | Inbound payload schema enforcement active
+Logging              | WORKING            | logger.ts; logs visible in stdout and startup logs    | Structured timestamped logging
+Tests                | WORKING            | npm test runs 4 test suites, 10/10 tests pass         | Passes in 1.74s using in-memory fallbacks
+
+==================================================
+4. DATABASE
+==================================================
+
+- Database Provider: PostgreSQL (specified as provider = "postgresql" in schema.prisma)
+- Connection Configuration:
+  DATABASE_URL=postgresql://postgres:********@localhost:5432/uber_db?schema=public
+- Prisma Configuration:
+  - Version: Prisma CLI and Client 5.22.0
+  - Client Generator: prisma-client-js
+  - Client Status: Generated in backend/node_modules/.prisma/client/
+- Current Models:
+  1. User: id (UUID), name, email (unique), phone (unique), passwordHash, role (RIDER | DRIVER | ADMIN), createdAt, updatedAt
+  2. Driver: id (UUID), userId (FK -> User.id, unique), status (OFFLINE | ONLINE | IN_RIDE), rating, createdAt, updatedAt
+  3. Vehicle: id (UUID), driverId (FK -> Driver.id, unique), vehicleType, model, numberPlate (unique), createdAt, updatedAt
+  4. Ride: id (UUID), riderId (FK -> User.id), driverId (FK -> Driver.id, nullable), status (RideStatus enum), pickupLat (Float), pickupLng (Float), destLat (Float), destLng (Float), pickupAddress, destAddress, distanceKm (Float, nullable), durationMin (Float, nullable), estimatedFare (Float), finalFare (Float, nullable), startedAt, completedAt, cancelledAt, createdAt, updatedAt
+- Current Tables:
+  None currently exist in an active database because PostgreSQL is offline and migrations have not been applied.
+- Important Indexes:
+  - users: unique(email), unique(phone)
+  - drivers: unique(userId)
+  - vehicles: unique(driverId), unique(numberPlate)
+  - rides: index([status]), index([riderId]), index([driverId])
+- PostGIS Status:
+  NOT IMPLEMENTED in Prisma. Latitude and longitude are stored as primitive Float scalars in the Ride model. No PostGIS extensions, geometry/geography data types (e.g. Unsupported("geography")), or ST_* SQL functions are used in code.
+- Migrations Status:
+  NOT CONFIGURED. The directory backend/prisma/migrations/ does not exist. Neither prisma migrate dev nor prisma db push has been executed.
+- Seed Status:
+  UNEXECUTED. A seed script exists at backend/prisma/seed.ts that defines 1 demo rider, 1 real driver (D1), and 7 simulated drivers (D2..D8), but it has not been executed because PostgreSQL is offline.
+- Real Database Connection Test:
+  TESTED AND FAILED.
+  Direct Prisma connection test (prisma.$connect()) failed with error:
+  "PRISMA_ERR: Can't reach database server at `localhost:5432`. Please make sure your database server is running at `localhost:5432`."
+  TCP connection test to port 5432 returned: TcpTestSucceeded: False.
+
+==================================================
+5. REDIS
+==================================================
+
+- Redis Configuration:
+  - Client: ioredis 5.4.2
+  - Config file: backend/src/config/redis.ts
+  - URL: REDIS_URL=redis://localhost:6379 (configured in .env)
+  - Container: redis:7-alpine on port 6379 defined in backend/docker-compose.yml
+- Whether Redis is Running:
+  NO. Direct TCP connection test to localhost:6379 confirmed port is closed. Docker daemon is stopped.
+- Whether Backend Connects Successfully:
+  FAILS for real Redis.
+  - In test mode (NODE_ENV=test), the backend intercepts connection and uses an internal MemoryRedis instance.
+  - In development mode (NODE_ENV=development), ioredis is initialized with lazyConnect: true and enableOfflineQueue: false. Because the socket is closed, attempting commands throws:
+    "Error: Stream isn't writeable and enableOfflineQueue options is false"
+    The catch/error handler does not immediately replace the exported redisClient reference, causing unhandled runtime errors on Redis writes.
+- What Data Redis is Intended to Store:
+  1. Driver Live Location (Hash): key `driver:location:<driverId>`
+     Fields: driverId, latitude, longitude, h3Index, heading, speed, status, updatedAt
+  2. H3 Cell Online Driver Index (Set): key `h3:<h3Index>:drivers`
+     Members: driverId strings currently inside that H3 hex cell
+  3. Active Ride State (Hash): key `ride:<rideId>:state`
+     Fields: rideId, status, riderId, driverId, pickupLat, pickupLng, updatedAt
+- Current Implemented Redis Operations:
+  - In ioredis client: hset, hgetall, sadd, srem, smembers, del, keys, flushall, get, set
+  - In MemoryRedis fallback: Complete Map-based implementations of get, set, del, sadd, srem, smembers, hset, hgetall, keys, flushall
+- Any Errors:
+  Runtime error in development mode when calling location or simulator services without Redis:
+  "Stream isn't writeable and enableOfflineQueue options is false"
+
+==================================================
+6. H3
+==================================================
+
+- H3 Package / Version:
+  h3-js version 4.2.0 (package.json specifies ^4.2.0)
+- Where H3 is Implemented:
+  1. Wrapper Service: backend/src/services/h3/h3.service.ts
+  2. Location Ingestion: backend/src/services/location/location.service.ts
+  3. Driver Matching: backend/src/services/matching/matching.service.ts
+- GPS -> H3 Conversion:
+  IMPLEMENTED. Method h3Service.latLngToCell(lat, lng) calls h3.latLngToCell(lat, lng, resolution).
+- Nearby-Cell Search:
+  IMPLEMENTED. Method h3Service.getSurroundingCells(h3Index, kRingRadius) calls h3.gridDisk(h3Index, kRingRadius).
+- Whether H3 is Actually Used by Matching:
+  YES. matchingService.findTopCandidateDrivers() converts rider pickup lat/lng to a center H3 cell, expands surrounding cells via getSurroundingCells() from ring 0 to 4, and retrieves driver IDs from Redis sets `h3:<cell>:drivers`.
+- Current H3 Resolution:
+  Resolution 8 (hex edge ~460m, diameter ~920m, area ~0.74 km²), configured via H3_RESOLUTION=8 in .env.
+- Any Problems:
+  None in H3 logic. Unit test `h3_matching.test.ts` validates cell calculation, validity checks, and k-ring searches.
+
+==================================================
+7. REAL-TIME SYSTEM
+==================================================
+
+- Socket.IO/WebSocket Configuration:
+  - Library: socket.io 4.8.1
+  - Server file: backend/src/websocket/socket.server.ts
+  - Attached to HTTP server in backend/src/server.ts
+  - CORS: { origin: '*', methods: ['GET', 'POST'] }
+  - Port: 3000 (ws://localhost:3000)
+- Current Events:
+  - Inbound (Client -> Server):
+    - `join`: Subscribes socket to room (e.g. driver:<driverId>, ride:<rideId>)
+    - `driver:location`: High-frequency driver GPS update
+    - `driver:online`: Marks driver ONLINE
+    - `driver:offline`: Marks driver OFFLINE
+    - `ride:accepted`: Driver accepts ride
+    - `ride:started`: Driver starts ride
+    - `ride:completed`: Driver completes ride
+    - `ride:cancelled`: Active ride cancelled
+  - Outbound (Server -> Client):
+    - `location:update`: Broadcasts driver coordinates, heading, speed, and h3Index
+    - `driver:status_changed`: Broadcasts driver availability status changes
+    - `ride:status_changed`: Broadcasts ride status transitions and driver metadata
+    - `error`: Emits validation or handler errors
+- Driver Location Update Flow:
+  1. Driver client or simulator emits `driver:location` with { driverId, latitude, longitude, heading, speed }.
+  2. wsLocationEventSchema parses and validates payload via Zod.
+  3. locationService.updateDriverLocation() computes H3 cell, detects if driver changed hexes, moves driver ID between Redis Sets (`h3:<old>:drivers` -> `h3:<new>:drivers`), and updates `driver:location:<id>` hash.
+  4. Server emits `location:update` to room `driver:<driverId>` and broadcasts globally.
+- Rider Location Flow:
+  Rider client joins room `ride:<rideId>` to receive live driver updates. Rider GPS updates are NOT streamed continuously; pickup and destination are submitted once during ride creation.
+- Ride Events:
+  `ride:accepted`, `ride:started`, `ride:completed`, `ride:cancelled` trigger state transitions in rideService and broadcast `ride:status_changed` to `ride:<rideId>` room and all clients.
+- Connection Handling:
+  Server handles connection and disconnect events with logging.
+- Whether a Real Client Can Currently Connect:
+  YES. Tested with real socket.io-client connecting to http://localhost:3000. Successfully received connection handshake and socket ID (e.g. Hd1yMGAldEmz5_-tAAAA).
+
+==================================================
+8. DRIVER SIMULATOR
+==================================================
+
+- Simulator Location:
+  - Core Service: backend/src/services/simulator/simulator.service.ts
+  - REST Controller: backend/src/controllers/simulator.controller.ts
+  - REST Routes: backend/src/routes/simulator.routes.ts
+  - Standalone Runner: backend/simulator/run.ts
+- Number of Simulated Drivers Supported:
+  7 drivers (IDs: 00000000-0000-4000-a000-000000000002 through 00000000-0000-4000-a000-000000000008, corresponding to D2..D8).
+- How Drivers are Generated:
+  Arranged evenly in a circle around center coordinates (default SF: 37.7749, -122.4194) with angles ((i - 2) * 2π / 7) at radii between ~500m and ~1.5km. Each driver is assigned a base speed (20-35 km/h) and initial heading.
+- Whether Movement is Implemented:
+  YES. On each step (default every 3000ms), stepSimulation() calculates displacement from speed and time, advances latitude and longitude along the heading vector, and adds a random heading perturbation (±2 degrees) for curvature.
+- How Location Updates are Sent:
+  Calls locationService.updateDriverLocation({ driverId, latitude, longitude, heading, speed, timestamp }, DriverStatus.ONLINE).
+- Whether Simulator Uses Same Backend Pipeline as Real Drivers:
+  YES. The simulator directly invokes locationService.updateDriverLocation, executing the identical H3 cell conversion, Redis set migration, and live location hashing as real drivers sending WebSocket pings.
+- How to Start It:
+  - Via CLI: npm run simulator (or npx tsx simulator/run.ts)
+  - Via REST API: POST http://localhost:3000/api/v1/simulator/start with optional JSON body { "centerLat": 37.7749, "centerLng": -122.4194, "intervalMs": 3000 }
+- Whether It Currently Works:
+  PARTIALLY. The simulation logic, state management, and physics work, and the unit tests pass. However, when triggered via REST in development mode while Redis is offline, it fails on the first location push with:
+  "Stream isn't writeable and enableOfflineQueue options is false"
+  Works when Redis is running or in test mode.
+
+==================================================
+9. MATCHING ENGINE
+==================================================
+
+Execution Flow:
+
+Rider GPS
+ ↓
+H3: IMPLEMENTED
+  - Rider pickup coordinates (pickupLat, pickupLng) converted to H3 resolution 8 index via h3Service.latLngToCell().
+ ↓
+Candidate drivers: IMPLEMENTED
+  - Expanding k-ring loop: starts at radius k=0 (center hex) and expands up to k=4 (covering ~2.5km radius).
+  - For each hex cell in the ring, queries Redis Set `h3:<cell>:drivers` to collect candidate driver IDs until at least 8 drivers are found or max ring is reached.
+ ↓
+Filtering: IMPLEMENTED
+  - For each collected driver ID, retrieves live location hash from Redis.
+  - Verifies driver location exists and status is DriverStatus.ONLINE.
+ ↓
+Distance/ETA: IMPLEMENTED
+  - Calculates straight-line geodesic distance in km using Haversine formula (calculateHaversineDistance).
+  - Calculates estimated travel time in minutes assuming 30 km/h average urban speed (estimateTravelTimeMinutes).
+  - Fetches driver and vehicle record from Prisma with a 300ms timeout fallback.
+ ↓
+Ranking: IMPLEMENTED
+  - Candidate driver list is sorted in ascending order of distanceKm: candidateDetails.sort((a, b) => a.distanceKm - b.distanceKm).
+ ↓
+Top 8: IMPLEMENTED
+  - Slices sorted array to maximum 8 drivers: candidateDetails.slice(0, maxDrivers).
+
+Algorithm Summary:
+The matching algorithm uses Multi-Ring H3 Spatial Clustering with Haversine Proximity Ordering:
+1. Spatial indexing filters available drivers by geographic proximity without full-table scans.
+2. Iterative disk expansion minimizes search radius to only as many rings as needed to find 8 candidates.
+3. Fine-grained ranking uses true great-circle distance rather than hex distance to ensure optimal ordering.
+
+==================================================
+10. API
+==================================================
+
+METHOD | PATH                           | STATUS             | PURPOSE
+-------|--------------------------------|--------------------|---------------------------------------------------------
+GET    | /health                        | WORKING            | Server health check returning status and ISO timestamp
+POST   | /api/v1/auth/register          | PARTIALLY WORKING  | Register rider or driver user (requires active DB)
+POST   | /api/v1/auth/login             | PARTIALLY WORKING  | Authenticate user and issue JWT token (requires active DB)
+POST   | /api/v1/drivers                | PARTIALLY WORKING  | Create driver profile and vehicle (requires active DB)
+GET    | /api/v1/drivers/:id            | PARTIALLY WORKING  | Get driver profile and vehicle details (requires active DB)
+PATCH  | /api/v1/drivers/:id/status     | PARTIALLY WORKING  | Update driver status & sync Redis index (requires DB + Redis)
+PATCH  | /api/v1/drivers/:id/location   | PARTIALLY WORKING  | HTTP fallback driver location update (requires Redis)
+GET    | /api/v1/drivers/nearby         | PARTIALLY WORKING  | Search nearby drivers via H3 matching (requires Redis)
+POST   | /api/v1/rides/estimate         | WORKING            | Calculate upfront fare estimate without DB write
+POST   | /api/v1/rides                  | PARTIALLY WORKING  | Create ride request, estimate fare & match (requires DB + Redis)
+GET    | /api/v1/rides/:id              | PARTIALLY WORKING  | Fetch ride details and current status (requires active DB)
+POST   | /api/v1/rides/:id/accept       | PARTIALLY WORKING  | Driver accepts ride, marks IN_RIDE (requires DB + Redis)
+POST   | /api/v1/rides/:id/start        | PARTIALLY WORKING  | Driver starts ride, marks IN_PROGRESS (requires DB + Redis)
+POST   | /api/v1/rides/:id/complete     | PARTIALLY WORKING  | Driver completes ride, audits final fare (requires DB + Redis)
+POST   | /api/v1/rides/:id/cancel       | PARTIALLY WORKING  | Cancel ride, restores driver availability (requires DB + Redis)
+POST   | /api/v1/simulator/start        | PARTIALLY WORKING  | Start 7-driver simulation loop (requires Redis)
+POST   | /api/v1/simulator/stop         | WORKING            | Stop 7-driver simulation loop
+GET    | /api/v1/simulator/status       | WORKING            | Query simulator running state, driver count & coordinates
+
+Note: Endpoints marked PARTIALLY WORKING have complete controller and service code implemented, but fail when executed because PostgreSQL or Redis is offline.
+
+==================================================
+11. WEBSOCKET EVENTS
+==================================================
+
+Implemented Events:
+
+Event                | Direction       | Status             | Purpose
+---------------------|-----------------|--------------------|---------------------------------------------------------
+join                 | Client -> Server| WORKING            | Subscribes client socket to a room channel
+driver:location      | Client -> Server| PARTIALLY WORKING  | High-frequency driver GPS update (requires Redis)
+driver:online        | Client -> Server| PARTIALLY WORKING  | Sets driver status ONLINE & syncs Redis (requires DB + Redis)
+driver:offline       | Client -> Server| PARTIALLY WORKING  | Sets driver status OFFLINE & syncs Redis (requires DB + Redis)
+ride:accepted        | Client -> Server| PARTIALLY WORKING  | Driver accepts ride, triggers state update (requires DB + Redis)
+ride:started         | Client -> Server| PARTIALLY WORKING  | Driver starts ride, marks IN_PROGRESS (requires DB + Redis)
+ride:completed       | Client -> Server| PARTIALLY WORKING  | Driver completes ride, audits final fare (requires DB + Redis)
+ride:cancelled       | Client -> Server| PARTIALLY WORKING  | Cancels ride, restores driver to ONLINE (requires DB + Redis)
+location:update      | Server -> Client| WORKING            | Broadcasts updated coordinates and H3 cell to subscribers
+driver:status_changed| Server -> Client| WORKING            | Broadcasts driver availability change
+ride:status_changed  | Server -> Client| WORKING            | Broadcasts ride state transitions to room & global clients
+error                | Server -> Client| WORKING            | Emits error message and origin event to socket client
+
+Documented / Planned but NOT Implemented in Code:
+- `ride:request` (Client -> Server): Listed in docs/WEBSOCKET.md, but NOT handled in backend/src/websocket/socket.server.ts. Ride creation is implemented exclusively over REST API (POST /api/v1/rides).
+
+==================================================
+12. RIDE LIFECYCLE
+==================================================
+
+Defined Ride Statuses:
+REQUESTED, SEARCHING, DRIVER_ASSIGNED, DRIVER_ARRIVING, DRIVER_ARRIVED, IN_PROGRESS, COMPLETED, CANCELLED
+
+Implemented State Transitions in RideService:
+- REQUESTED -> SEARCHING        : WORKING (Permitted by validTransitions map)
+- REQUESTED -> DRIVER_ASSIGNED   : WORKING (Permitted and used by acceptRide)
+- REQUESTED -> CANCELLED         : WORKING (Permitted and used by cancelRide)
+- SEARCHING -> DRIVER_ASSIGNED   : WORKING (Permitted by validTransitions map)
+- SEARCHING -> CANCELLED         : WORKING (Permitted by validTransitions map)
+- DRIVER_ASSIGNED -> DRIVER_ARRIVING : WORKING (Permitted by validTransitions map)
+- DRIVER_ASSIGNED -> IN_PROGRESS: WORKING (Permitted directly by startRide)
+- DRIVER_ASSIGNED -> CANCELLED   : WORKING (Permitted and used by cancelRide)
+- DRIVER_ARRIVING -> DRIVER_ARRIVED  : WORKING (Permitted by validTransitions map)
+- DRIVER_ARRIVING -> IN_PROGRESS: WORKING (Permitted directly by startRide)
+- DRIVER_ARRIVING -> CANCELLED   : WORKING (Permitted and used by cancelRide)
+- DRIVER_ARRIVED -> IN_PROGRESS  : WORKING (Permitted and used by startRide)
+- DRIVER_ARRIVED -> CANCELLED    : WORKING (Permitted and used by cancelRide)
+- IN_PROGRESS -> COMPLETED       : WORKING (Permitted and used by completeRide)
+- IN_PROGRESS -> CANCELLED       : WORKING (Permitted and used by cancelRide)
+- COMPLETED -> Any               : WORKING / REJECTED (Terminal state, illegal transitions throw AppError)
+- CANCELLED -> Any               : WORKING / REJECTED (Terminal state, illegal transitions throw AppError)
+
+Note: While intermediate states (SEARCHING, DRIVER_ARRIVING, DRIVER_ARRIVED) are supported by the transition validator, dedicated REST trigger endpoints currently exist only for acceptRide, startRide, completeRide, and cancelRide.
+
+==================================================
+13. TEST RESULTS
+==================================================
+
+- Test Runner: Jest 29.7.0 with ts-jest
+- Command: npm test
+- Test Summary:
+  - Total Tests: 10
+  - Passed: 10
+  - Failed: 0
+  - Skipped: 0
+  - Test Suites: 4 passed, 4 total
+  - Duration: 1.738 seconds
+- Test Suite Breakdown:
+  1. tests/api.test.ts: 4 passed (GET /health, POST /rides/estimate valid, POST /rides/estimate invalid, GET /simulator/status)
+  2. tests/fare.test.ts: 2 passed (calculateHaversineDistance, calculateFare base+dist+time breakdown)
+  3. tests/h3_matching.test.ts: 2 passed (H3 latLngToCell validity, Top 8 candidate ranking by distance)
+  4. tests/ride_state.test.ts: 2 passed (rejects invalid transitions, permits sequential transitions)
+- TypeScript Verification:
+  - Command: npx tsc --noEmit
+  - Result: Clean exit (Code 0). Zero TypeScript compile errors.
+- Build Verification:
+  - Command: npm run build
+  - Result: Clean exit (Code 0). Successfully compiled to backend/dist/.
+- Linting:
+  - Status: NOT CONFIGURED. No ESLint configuration or lint script exists in package.json.
+
+==================================================
+14. CURRENT RUNTIME STATUS
+==================================================
+
+Component        | Can Start/Connect? | Diagnostic Verification Method
+-----------------|--------------------|---------------------------------------------------------
+Backend (Express)| YES                | node dist/server.js starts; HTTP GET /health returns 200 OK
+WebSocket Server | YES                | socket.io-client connects to ws://localhost:3000; gets ID
+PostgreSQL       | NO                 | Test-NetConnection localhost:5432 failed (TcpTestSucceeded: False)
+Redis            | NO                 | TCP socket to localhost:6379 closed (Docker not running)
+Prisma           | NO                 | prisma.$connect() threw "Can't reach database server at localhost:5432"
+Driver Simulator | PARTIALLY          | Initial status returns OK; fails on tick in dev mode due to Redis error
+
+==================================================
+15. KNOWN ERRORS
+==================================================
+
+ERROR #1
+Component: PostgreSQL Database Engine
+Exact Error:
+"PRISMA_ERR: Can't reach database server at `localhost:5432`. Please make sure your database server is running at `localhost:5432`."
+Likely Cause:
+Docker Desktop is not running, so the `uber_postgres` container defined in docker-compose.yml has not been started.
+Severity: High
+Blocking MVP? YES
+
+ERROR #2
+Component: Redis In-Memory Client / Fallback Store
+Exact Error:
+"Unhandled Server Error: Error: Stream isn't writeable and enableOfflineQueue options is false
+    at EventEmitter.sendCommand (backend/node_modules/ioredis/built/Redis.js:376:32)
+    at EventEmitter.hgetall (backend/node_modules/ioredis/built/utils/Commander.js:90:25)
+    at LocationService.updateDriverLocation (backend/dist/services/location/location.service.js:18:38)"
+Likely Cause:
+In backend/src/config/redis.ts, when NODE_ENV is not 'test' and Redis is offline, ioredis is initialized with enableOfflineQueue: false. Calling Redis commands before connection fails immediately on the unwriteable stream, and the error event listener fails to swap the active client pointer to MemoryRedis before commands execute.
+Severity: High
+Blocking MVP? YES
+
+ERROR #3
+Component: Database Migrations
+Exact Error:
+Directory backend/prisma/migrations does not exist.
+Likely Cause:
+Neither `prisma migrate dev` nor `prisma db push` has ever been executed against a live database instance. Tables do not exist in PostgreSQL.
+Severity: Medium
+Blocking MVP? YES (once PostgreSQL is started, tables must be created before user or ride data can be stored)
+
+ERROR #4
+Component: Driver Service HTTP Status Code Typo
+Exact Error:
+In backend/src/services/driver/driver.service.ts line 12:
+`throw new AppError('User not found', 444, 'USER_NOT_FOUND');`
+Likely Cause:
+Typographical error in HTTP status code (444 used instead of standard 404 Not Found).
+Severity: Low
+Blocking MVP? NO
+
+ERROR #5
+Component: WebSocket Event Contract Discrepancy
+Exact Error:
+Event `ride:request` is documented in docs/WEBSOCKET.md but has no event listener in backend/src/websocket/socket.server.ts.
+Likely Cause:
+Ride creation was implemented through Express REST API (POST /api/v1/rides) and not mirrored on the WebSocket server.
+Severity: Low
+Blocking MVP? NO (frontend can create rides via REST endpoint)
+
+==================================================
+16. MVP READINESS
+==================================================
+
+Requirement                     | Status   | Notes
+--------------------------------|----------|-------------------------------------------------------
+Backend starts                  | PASS     | Express & Socket.IO server boots and binds to port 3000
+Database works                  | FAIL     | Docker/PostgreSQL offline; connection fails
+Redis works                     | PARTIAL  | MemoryRedis works in tests; fails in dev mode
+H3 works                        | PASS     | Resolution 8 indexing, cell conversions, k-ring disks
+Driver location works           | PARTIAL  | Code verified; blocked at runtime by Redis connection
+Real-time location works        | PASS     | Socket.IO broadcasts location:update to subscribers
+7 simulated drivers work        | PARTIAL  | Physics & routes work; blocked at runtime by Redis
+Nearby-driver search works      | PASS     | H3 ring expansion & ranking verified in tests
+Top 8 drivers works             | PASS     | Distance sorting and cutoff verified in tests
+Ride request works              | PARTIAL  | Controller/service complete; blocked by offline DB
+Driver acceptance works         | PARTIAL  | Controller/service complete; blocked by offline DB
+Ride start works                | PARTIAL  | Controller/service complete; blocked by offline DB
+Ride completion works           | PARTIAL  | Controller/service complete; blocked by offline DB
+Basic fare works                | PASS     | Base $2.50 + distance + duration calculation verified
+API usable by frontend          | PARTIAL  | Non-DB endpoints work; DB endpoints need active DB
+WebSocket usable by frontend    | PASS     | Clients can connect and listen on ws://localhost:3000
+
+==================================================
+17. BLOCKERS
+==================================================
+
+P0 Blockers (Prevent Core Demo from Functioning):
+1. Docker Desktop is not running:
+   Both PostgreSQL (5432) and Redis (6379) containers are offline, preventing persistent storage and live caching.
+2. PostgreSQL tables not created:
+   Prisma schema has not been pushed to PostgreSQL (prisma db push or prisma migrate dev needed).
+3. Database seed not executed:
+   Prisma seed script (prisma/seed.ts) has not been run; demo rider, real driver D1, and drivers D2..D8 do not exist in DB.
+4. Redis stream error in development mode:
+   When Redis is offline, backend/src/config/redis.ts crashes on location updates with "Stream isn't writeable" instead of falling back to MemoryRedis.
+
+P1 Blockers (Important but Workaround Exists):
+1. PostGIS spatial extensions are not mapped into Prisma schema:
+   Coordinates are stored as Float scalars and distances are calculated in Node.js via Haversine. This works for the demo scale, but diverges from documented native PostGIS geography design.
+2. Missing WebSocket ride:request event handler:
+   Clients must use REST endpoint POST /api/v1/rides rather than WebSocket to request rides.
+
+P2 Blockers (Non-Essential Polish):
+1. Typo in driver.service.ts line 12 (status code 444 instead of 404).
+2. Missing authentication middleware on ride and driver route handlers.
+
+==================================================
+18. NEXT STEPS
+==================================================
+
+Recommended execution order for subsequent tasks (Do NOT implement yet):
+
+1. Start Docker Desktop and launch containers:
+   Execute `docker compose up -d` in backend/ to start PostgreSQL (5432) and Redis (6379).
+2. Push Prisma Schema to PostgreSQL:
+   Run `npx prisma db push` in backend/ to generate tables and indexes in uber_db.
+3. Seed Database:
+   Run `npm run prisma:seed` in backend/ to create Demo Rider, Driver D1, and Simulated Drivers D2..D8.
+4. Harden Redis In-Memory Fallback:
+   In backend/src/config/redis.ts, ensure that when Redis connection is unavailable, redisClient is immediately swapped to MemoryRedis so the server never crashes on Redis stream write errors.
+5. Fix Status Code Typo:
+   In backend/src/services/driver/driver.service.ts line 12, change status code 444 to 404.
+6. Implement `ride:request` WebSocket Handler:
+   Add a listener in backend/src/websocket/socket.server.ts for `ride:request` that calls rideService.createRide to achieve full parity with docs/WEBSOCKET.md.
+7. Perform End-to-End Verification:
+   Start backend (`npm run dev`) and simulator (`npm run simulator`), connect test rider and driver clients over Socket.IO, and execute a complete ride lifecycle (request -> accept -> start -> complete).
+
+==================================================
+19. IMPORTANT FILES
+==================================================
+
+- backend/docker-compose.yml
+  Defines PostgreSQL (PostGIS) and Redis services. Required to bring runtime infrastructure online.
+- backend/prisma/schema.prisma
+  Defines User, Driver, Vehicle, and Ride models. Must be pushed to database via Prisma.
+- backend/prisma/seed.ts
+  Contains seed records for demo rider, driver D1, and drivers D2..D8.
+- backend/src/config/redis.ts
+  Manages ioredis connection and MemoryRedis fallback; needs fallback hardening for development mode.
+- backend/src/services/simulator/simulator.service.ts
+  Implements 7-driver realistic movement physics and periodic location push.
+- backend/src/services/matching/matching.service.ts
+  Implements H3 resolution 8 k-ring spatial lookup and Top 8 distance ranking.
+- backend/src/services/ride/ride.service.ts
+  Implements ride lifecycle transactions and state machine enforcement.
+- backend/src/websocket/socket.server.ts
+  Handles real-time Socket.IO event ingestion and status broadcasts.
+
+==================================================
+20. FINAL SUMMARY
+==================================================
+
+- What is Working:
+  The core TypeScript application architecture is well-structured and fully implemented. Express routing, health checks, fare estimation calculations, H3 resolution 8 geospatial conversions, k-ring neighbor search, Haversine proximity ranking for Top 8 drivers, ride state machine validation, Socket.IO server initialization and event broadcasting, and all 10 unit and integration tests are passing 100%.
+
+- What is Partially Working:
+  REST and WebSocket operations that require data persistence (user registration, login, ride lifecycle state updates, driver status changes) have complete service logic implemented, but are blocked at runtime because PostgreSQL is not running. The 7-driver simulator works in unit test mode, but crashes in development mode when Redis is not running due to an unhandled ioredis stream write error.
+
+- What is Broken:
+  - Database connectivity: PostgreSQL is offline on port 5432.
+  - Redis offline fallback: In development mode, the backend does not gracefully fall back to MemoryRedis when Redis is unreachable.
+
+- What is Missing:
+  - Running Docker containers for PostgreSQL and Redis.
+  - Applied Prisma migrations or schema push to create tables.
+  - Seeding of demo accounts (Rider, Real Driver D1, Simulated Drivers D2..D8).
+  - Native PostGIS geometry columns in Prisma (currently using Float lat/lng).
+
+- Current MVP Readiness Percentage:
+  ~75% (Code logic is ~95% complete; runtime infrastructure and database initialization are at 0%).
+
+- Most Important Next Action:
+  Start Docker Desktop, run `docker compose up -d` in `backend/`, and execute `npx prisma db push` followed by `npm run prisma:seed`.

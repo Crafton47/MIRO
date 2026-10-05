@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Uber Backend Live Dashboard - Development Only</title>
+  
+  <!-- Leaflet CSS for Map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg-dark: #0b0f19;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --card-header: #1a2234;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --accent-green: #10b981;
+      --accent-blue: #3b82f6;
+      --accent-gold: #f59e0b;
+      --accent-purple: #8b5cf6;
+      --accent-red: #ef4444;
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.5;
+      padding: 16px;
+    }
+
+    /* Top Navigation / Header */
+    header {
+      background-color: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 14px 20px;
+      margin-bottom: 16px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .title-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .title-group h1 {
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.02em;
+    }
+
+    .badge-dev {
+      background-color: rgba(245, 158, 11, 0.15);
+      color: var(--accent-gold);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: #6b7280;
+    }
+
+    .dot.online {
+      background-color: var(--accent-green);
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+    }
+
+    .dot.offline {
+      background-color: var(--accent-red);
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+    }
+
+    .dot.warning {
+      background-color: var(--accent-gold);
+      box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+    }
+
+    /* Controls Bar */
+    .controls-bar {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 12px 18px;
+      margin-bottom: 16px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .control-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .input-coord {
+      background: #0b0f19;
+      border: 1px solid #374151;
+      color: #fff;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      width: 110px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .input-coord:focus {
+      border-color: var(--accent-blue);
+    }
+
+    .btn {
+      font-family: var(--font-sans);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 7px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #1d4ed8, #1e40af);
+    }
+
+    .btn-match {
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+    }
+
+    .btn-match:hover {
+      background: linear-gradient(135deg, #059669, #047857);
+    }
+
+    .btn-secondary {
+      background: #374151;
+      color: #e5e7eb;
+    }
+
+    .btn-secondary:hover {
+      background: #4b5563;
+    }
+
+    .toggle-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    /* Grid Layout */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    @media (max-width: 1024px) {
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Card Panels */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card-header {
+      background: var(--card-header);
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-body {
+      padding: 16px;
+      flex: 1;
+    }
+
+    /* Map Element */
+    #map {
+      height: 480px;
+      width: 100%;
+      background: #0f172a;
+      border-radius: 8px;
+    }
+
+    /* Tables */
+    .table-container {
+      overflow-x: auto;
+      max-height: 460px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      text-align: left;
+    }
+
+    thead th {
+      background: #0f172a;
+      color: #9ca3af;
+      font-weight: 600;
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--card-border);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.03em;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid #1f2937;
+      transition: background-color 0.15s;
+    }
+
+    tbody tr:hover {
+      background-color: rgba(255, 255, 255, 0.02);
+    }
+
+    tbody tr.matched-row {
+      background-color: rgba(16, 185, 129, 0.08);
+    }
+
+    tbody tr.matched-row:hover {
+      background-color: rgba(16, 185, 129, 0.12);
+    }
+
+    td {
+      padding: 8px 12px;
+      color: #e5e7eb;
+    }
+
+    .mono {
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .pill-green {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--accent-green);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .pill-blue {
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--accent-blue);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+
+    .pill-gold {
+      background: rgba(245, 158, 11, 0.15);
+      color: var(--accent-gold);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+
+    .pill-gray {
+      background: rgba(107, 114, 128, 0.15);
+      color: #9ca3af;
+      border: 1px solid rgba(107, 114, 128, 0.3);
+    }
+
+    /* Event Log */
+    .event-log {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      background: #090d16;
+      border-radius: 6px;
+      padding: 12px;
+      height: 240px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .log-item {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      line-height: 1.4;
+    }
+
+    .log-time {
+      color: #6b7280;
+      flex-shrink: 0;
+    }
+
+    .log-tag {
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .log-tag.d-loc { color: var(--accent-green); }
+    .log-tag.d-match { color: var(--accent-gold); }
+    .log-tag.d-ride { color: var(--accent-purple); }
+    .log-tag.d-sys { color: var(--accent-blue); }
+    .log-tag.d-err { color: var(--accent-red); }
+
+    .log-msg {
+      color: #d1d5db;
+      word-break: break-all;
+    }
+
+    /* Custom Leaflet Markers */
+    .driver-pin {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #059669;
+      color: #fff;
+      border: 2px solid #34d399;
+      border-radius: 50%;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 11px;
+      box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+      transition: transform 0.3s ease;
+    }
+
+    .driver-pin.real-driver {
+      background: #2563eb;
+      border-color: #60a5fa;
+      box-shadow: 0 0 10px rgba(37, 99, 235, 0.6);
+    }
+
+    .driver-pin.matched {
+      background: #d97706;
+      border-color: #fde047;
+      box-shadow: 0 0 14px rgba(245, 158, 11, 0.9);
+      animation: pulseMatch 1.5s infinite;
+    }
+
+    @keyframes pulseMatch {
+      0% { box-shadow: 0 0 6px rgba(245, 158, 11, 0.6); }
+      50% { box-shadow: 0 0 16px rgba(245, 158, 11, 1); }
+      100% { box-shadow: 0 0 6px rgba(245, 158, 11, 0.6); }
+    }
+
+    .rider-pin {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #dc2626;
+      color: #fff;
+      border: 2px solid #fecaca;
+      border-radius: 50%;
+      font-size: 13px;
+      box-shadow: 0 0 14px rgba(239, 68, 68, 0.8);
+      cursor: grab;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="title-group">
+      <h1>Uber Backend Live Dashboard</h1>
+      <span class="badge-dev">Development Only</span>
+    </div>
+
+    <div class="status-bar">
+      <div class="status-item">
+        <span class="dot online" id="dotBackend"></span>
+        <span>Backend</span>
+      </div>
+      <div class="status-item">
+        <span class="dot" id="dotRedis"></span>
+        <span>Redis (6380)</span>
+      </div>
+      <div class="status-item">
+        <span class="dot" id="dotPostgres"></span>
+        <span>Postgres (5433)</span>
+      </div>
+      <div class="status-item">
+        <span class="dot" id="dotSocket"></span>
+        <span>Socket.IO (3000)</span>
+      </div>
+      <div class="status-item">
+        <span class="dot" id="dotSim"></span>
+        <span id="labelSim">Simulator</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Controls Bar -->
+  <div class="controls-bar">
+    <div class="control-group">
+      <span class="control-label">📍 Rider Pickup:</span>
+      <input type="number" step="0.0001" id="riderLat" class="input-coord" value="37.7749" placeholder="Latitude">
+      <input type="number" step="0.0001" id="riderLng" class="input-coord" value="-122.4194" placeholder="Longitude">
+      <button class="btn btn-secondary" id="btnUpdateRider" onclick="updateRiderFromInputs()">Set Pin</button>
+      <button class="btn btn-match" id="btnTestMatch" onclick="runMatching()">⚡ Test Matching (Top 8)</button>
+    </div>
+
+    <div class="control-group">
+      <label class="toggle-label">
+        <input type="checkbox" id="toggleH3" checked onchange="toggleH3Layer()">
+        Show H3 Hex Cells
+      </label>
+      <button class="btn btn-secondary" id="btnToggleSim" onclick="toggleSimulator()">▶ Start Simulator</button>
+      <button class="btn btn-secondary" onclick="fetchSystemStatus()">↻ Refresh</button>
+    </div>
+  </div>
+
+  <!-- Primary Map & Top 8 Grid -->
+  <div class="dashboard-grid">
+    <!-- Map Card -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <span>🗺️ Live Spatial Map</span>
+        </div>
+        <span style="font-size: 11px; color: var(--text-muted);" id="mapStatusText">
+          Drag rider pin or click map to move pickup
+        </span>
+      </div>
+      <div class="card-body">
+        <div id="map"></div>
+      </div>
+    </div>
+
+    <!-- Top 8 Matches Card -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <span>🎯 Top 8 Driver Matches</span>
+        </div>
+        <span class="pill pill-gold" id="matchCountBadge">0 Matched</span>
+      </div>
+      <div class="card-body" style="padding: 0;">
+        <div class="table-container">
+          <table id="matchTable">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Driver</th>
+                <th>Distance</th>
+                <th>ETA</th>
+                <th>Rating</th>
+                <th>Vehicle</th>
+                <th>H3 Cell</th>
+              </tr>
+            </thead>
+            <tbody id="matchTableBody">
+              <tr>
+                <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 30px;">
+                  Click "⚡ Test Matching (Top 8)" above to execute spatial lookup.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Driver Status Table & Event Log Grid -->
+  <div class="dashboard-grid">
+    <!-- Driver Status Table -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <span>🚗 Driver Fleet Status</span>
+        </div>
+        <span style="font-size: 11px; color: var(--text-muted);" id="driverFleetCount">8 Drivers Monitored</span>
+      </div>
+      <div class="card-body" style="padding: 0;">
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Driver</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Latitude</th>
+                <th>Longitude</th>
+                <th>H3 Cell</th>
+                <th>Speed</th>
+                <th>Distance</th>
+              </tr>
+            </thead>
+            <tbody id="driverTableBody">
+              <!-- Populated via script -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Event Log -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <span>📡 Real-Time Event Log</span>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <label class="toggle-label" style="font-size: 11px;">
+            <input type="checkbox" id="toggleAutoScroll" checked> Auto-scroll
+          </label>
+          <button class="btn btn-secondary" style="padding: 2px 8px; font-size: 11px;" onclick="clearLogs()">Clear</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="event-log" id="eventLogContainer">
+          <div class="log-item">
+            <span class="log-time">--:--:--</span>
+            <span class="log-tag d-sys">[SYSTEM]</span>
+            <span class="log-msg">Connecting to backend Socket.IO...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Socket.IO Client (Bundled from Backend) -->
+  <script src="/socket.io/socket.io.js"></script>
+  <!-- Leaflet Map JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <!-- Uber H3 JS for Hex Boundaries -->
+  <script src="https://unpkg.com/h3-js@4.2.0/dist/h3-js.umd.js"></script>
+
+  <script>
+    // State management
+    let map = null;
+    let riderMarker = null;
+    let driverMarkers = {};
+    let driverH3Polygons = {};
+    let riderLat = 37.7749;
+    let riderLng = -122.4194;
+    let matchedDriverIds = new Set();
+    let isSimulatorRunning = false;
+    let maxLogs = 50;
+    const logs = [];
+
+    // Driver registry (D1..D8)
+    const drivers = {
+      '00000000-0000-4000-a000-000000000001': { code: 'D1', name: 'Real Driver (D1)', isReal: true, status: 'OFFLINE', lat: null, lng: null, h3: '-', speed: 0, heading: 0, dist: null },
+      '00000000-0000-4000-a000-000000000002': { code: 'D2', name: 'Simulated Driver D2', isReal: false, status: 'ONLINE', lat: 37.7749, lng: -122.4084, h3: '-', speed: 30, heading: 90, dist: null },
+      '00000000-0000-4000-a000-000000000003': { code: 'D3', name: 'Simulated Driver D3', isReal: false, status: 'ONLINE', lat: 37.7788, lng: -122.4162, h3: '-', speed: 35, heading: 141, dist: null },
+      '00000000-0000-4000-a000-000000000004': { code: 'D4', name: 'Simulated Driver D4', isReal: false, status: 'ONLINE', lat: 37.7826, lng: -122.4211, h3: '-', speed: 20, heading: 193, dist: null },
+      '00000000-0000-4000-a000-000000000005': { code: 'D5', name: 'Simulated Driver D5', isReal: false, status: 'ONLINE', lat: 37.7796, lng: -122.4293, h3: '-', speed: 25, heading: 244, dist: null },
+      '00000000-0000-4000-a000-000000000006': { code: 'D6', name: 'Simulated Driver D6', isReal: false, status: 'ONLINE', lat: 37.7727, lng: -122.4239, h3: '-', speed: 30, heading: 296, dist: null },
+      '00000000-0000-4000-a000-000000000007': { code: 'D7', name: 'Simulated Driver D7', isReal: false, status: 'ONLINE', lat: 37.7671, lng: -122.4211, h3: '-', speed: 35, heading: 347, dist: null },
+      '00000000-0000-4000-a000-000000000008': { code: 'D8', name: 'Simulated Driver D8', isReal: false, status: 'ONLINE', lat: 37.7662, lng: -122.4125, h3: '-', speed: 20, heading: 39, dist: null },
+    };
+
+    // Haversine formula in km
+    function haversine(lat1, lon1, lat2, lon2) {
+      if (!lat1 || !lon1 || !lat2 || !lon2) return null;
+      const R = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return (R * c).toFixed(2);
+    }
+
+    // Initialize Leaflet Map
+    function initMap() {
+      map = L.map('map', {
+        zoomControl: true,
+        attributionControl: false
+      }).setView([riderLat, riderLng], 14);
+
+      // CartoDB Dark Matter tiles
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19,
+        subdomains: 'abcd',
+      }).addTo(map);
+
+      // Rider Marker (Draggable)
+      const riderIcon = L.divIcon({
+        className: 'custom-icon',
+        html: `<div class="rider-pin" style="width: 32px; height: 32px;">📍</div>`,
+        iconSize: [32, 32],
+        iconAnchor: [16, 16]
+      });
+
+      riderMarker = L.marker([riderLat, riderLng], { icon: riderIcon, draggable: true }).addTo(map);
+      riderMarker.bindTooltip("<b>Rider Pickup Pin</b><br>Drag to reposition", { permanent: false, direction: 'top' });
+
+      riderMarker.on('dragend', function (e) {
+        const coord = e.target.getLatLng();
+        setRiderLocation(coord.lat, coord.lng);
+      });
+
+      map.on('click', function (e) {
+        setRiderLocation(e.latlng.lat, e.latlng.lng);
+      });
+    }
+
+    // Update Rider coordinates from UI
+    function setRiderLocation(lat, lng) {
+      riderLat = parseFloat(lat.toFixed(6));
+      riderLng = parseFloat(lng.toFixed(6));
+      document.getElementById('riderLat').value = riderLat;
+      document.getElementById('riderLng').value = riderLng;
+      if (riderMarker) riderMarker.setLatLng([riderLat, riderLng]);
+      updateDistances();
+      renderDriverTable();
+      addLog('d-sys', `[RIDER] Pickup updated to (${riderLat}, ${riderLng})`);
+    }
+
+    function updateRiderFromInputs() {
+      const lat = parseFloat(document.getElementById('riderLat').value);
+      const lng = parseFloat(document.getElementById('riderLng').value);
+      if (!isNaN(lat) && !isNaN(lng)) {
+        setRiderLocation(lat, lng);
+        if (map) map.panTo([lat, lng]);
+      }
+    }
+
+    // Update Distance column
+    function updateDistances() {
+      for (const id in drivers) {
+        const d = drivers[id];
+        if (d.lat && d.lng) {
+          d.dist = haversine(riderLat, riderLng, d.lat, d.lng);
+        } else {
+          d.dist = null;
+        }
+      }
+    }
+
+    // Driver Marker Renderer
+    function updateDriverMarker(id) {
+      const d = drivers[id];
+      if (!d || !d.lat || !d.lng || d.status === 'OFFLINE') {
+        if (driverMarkers[id]) {
+          map.removeLayer(driverMarkers[id]);
+          delete driverMarkers[id];
+        }
+        if (driverH3Polygons[id]) {
+          map.removeLayer(driverH3Polygons[id]);
+          delete driverH3Polygons[id];
+        }
+        return;
+      }
+
+      const isMatched = matchedDriverIds.has(id);
+      const pinClass = `driver-pin ${d.isReal ? 'real-driver' : ''} ${isMatched ? 'matched' : ''}`;
+      const iconHtml = `<div class="${pinClass}" style="width: 28px; height: 28px;">${d.code}</div>`;
+      
+      const customIcon = L.divIcon({
+        className: 'custom-icon',
+        html: iconHtml,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14]
+      });
+
+      if (!driverMarkers[id]) {
+        driverMarkers[id] = L.marker([d.lat, d.lng], { icon: customIcon }).addTo(map);
+      } else {
+        driverMarkers[id].setLatLng([d.lat, d.lng]);
+        driverMarkers[id].setIcon(customIcon);
+      }
+
+      driverMarkers[id].bindPopup(`
+        <div style="font-family: var(--font-sans); color: #111;">
+          <h4 style="margin: 0 0 4px 0; color: #1d4ed8;">${d.name} (${d.code})</h4>
+          <b>Status:</b> ${d.status}<br>
+          <b>Location:</b> ${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}<br>
+          <b>H3 Cell:</b> <code style="font-family: monospace;">${d.h3}</code><br>
+          <b>Speed:</b> ${d.speed || 0} km/h • Heading: ${d.heading || 0}°<br>
+          <b>Distance to Rider:</b> ${d.dist ? d.dist + ' km' : 'N/A'}<br>
+          ${isMatched ? '<span style="color: #d97706; font-weight: bold;">⭐ Top 8 Match</span>' : ''}
+        </div>
+      `);
+
+      // Draw H3 Polygon if enabled
+      if (document.getElementById('toggleH3').checked && d.h3 && d.h3 !== '-' && window.h3) {
+        try {
+          const boundary = window.h3.cellToBoundary(d.h3);
+          if (!driverH3Polygons[id]) {
+            driverH3Polygons[id] = L.polygon(boundary, {
+              color: isMatched ? '#f59e0b' : '#10b981',
+              weight: 1.5,
+              opacity: 0.6,
+              fillOpacity: 0.1
+            }).addTo(map);
+          } else {
+            driverH3Polygons[id].setLatLngs(boundary);
+            driverH3Polygons[id].setStyle({
+              color: isMatched ? '#f59e0b' : '#10b981',
+              weight: 1.5
+            });
+          }
+        } catch (e) {
+          // ignore invalid h3
+        }
+      }
+    }
+
+    function toggleH3Layer() {
+      const show = document.getElementById('toggleH3').checked;
+      for (const id in driverH3Polygons) {
+        if (!show && driverH3Polygons[id]) {
+          map.removeLayer(driverH3Polygons[id]);
+          delete driverH3Polygons[id];
+        }
+      }
+      if (show) {
+        for (const id in drivers) {
+          updateDriverMarker(id);
+        }
+      }
+    }
+
+    // Render Driver Fleet Table
+    function renderDriverTable() {
+      const tbody = document.getElementById('driverTableBody');
+      let html = '';
+
+      for (const id in drivers) {
+        const d = drivers[id];
+        const isMatched = matchedDriverIds.has(id);
+        const statusPill = d.status === 'ONLINE' ? 'pill-green' : d.status === 'IN_RIDE' ? 'pill-gold' : 'pill-gray';
+        const typePill = d.isReal ? 'pill-blue' : 'pill-gray';
+
+        html += `
+          <tr class="${isMatched ? 'matched-row' : ''}">
+            <td style="font-weight: 600;">
+              ${d.code}
+              ${isMatched ? '<span class="pill pill-gold" style="margin-left: 4px;">MATCH</span>' : ''}
+            </td>
+            <td><span class="pill ${typePill}">${d.isReal ? 'Real GPS' : 'Simulated'}</span></td>
+            <td><span class="pill ${statusPill}">${d.status}</span></td>
+            <td class="mono">${d.lat ? d.lat.toFixed(5) : '-'}</td>
+            <td class="mono">${d.lng ? d.lng.toFixed(5) : '-'}</td>
+            <td class="mono">${d.h3 || '-'}</td>
+            <td>${d.status === 'ONLINE' ? `${d.speed || 0} km/h` : '-'}</td>
+            <td style="font-weight: 600;">${d.dist ? d.dist + ' km' : '-'}</td>
+          </tr>
+        `;
+      }
+
+      tbody.innerHTML = html;
+    }
+
+    // Event Log System
+    function addLog(tagClass, msg) {
+      const now = new Date();
+      const timeStr = now.toTimeString().split(' ')[0];
+      const container = document.getElementById('eventLogContainer');
+
+      const item = document.createElement('div');
+      item.className = 'log-item';
+      item.innerHTML = `
+        <span class="log-time">${timeStr}</span>
+        <span class="log-tag ${tagClass}">[EVENT]</span>
+        <span class="log-msg">${msg}</span>
+      `;
+
+      container.appendChild(item);
+
+      // Keep max 50
+      while (container.children.length > maxLogs) {
+        container.removeChild(container.firstChild);
+      }
+
+      if (document.getElementById('toggleAutoScroll').checked) {
+        container.scrollTop = container.scrollHeight;
+      }
+    }
+
+    function clearLogs() {
+      document.getElementById('eventLogContainer').innerHTML = '';
+      addLog('d-sys', '[SYSTEM] Log cleared.');
+    }
+
+    // Run Matching (Calls existing /api/v1/drivers/nearby)
+    async function runMatching() {
+      const btn = document.getElementById('btnTestMatch');
+      btn.disabled = true;
+      btn.innerText = 'Searching...';
+
+      try {
+        addLog('d-match', `[MATCHING] Triggering Top-8 lookup around (${riderLat}, ${riderLng})...`);
+        const res = await fetch(`/api/v1/drivers/nearby?latitude=${riderLat}&longitude=${riderLng}&radiusKm=8`);
+        const json = await res.json();
+
+        if (json.success && Array.isArray(json.data)) {
+          const list = json.data;
+          matchedDriverIds.clear();
+          const matchBody = document.getElementById('matchTableBody');
+          document.getElementById('matchCountBadge').innerText = `${list.length} Matched`;
+
+          if (list.length === 0) {
+            matchBody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">No available drivers found in surrounding H3 cells. Make sure simulator is started.</td></tr>`;
+            addLog('d-match', `[MATCHING] 0 candidate drivers found in surrounding hexes.`);
+          } else {
+            let html = '';
+            list.forEach((c, index) => {
+              matchedDriverIds.add(c.driverId);
+              html += `
+                <tr style="cursor: pointer;" onclick="focusDriver('${c.driverId}')">
+                  <td style="font-weight: 700; color: var(--accent-gold);">#${index + 1}</td>
+                  <td style="font-weight: 600;">${c.driverName || 'Driver ' + c.driverId.slice(-4)}</td>
+                  <td style="color: var(--accent-green); font-weight: 600;">${c.distanceKm} km</td>
+                  <td>${c.etaMinutes} min</td>
+                  <td>⭐ ${c.rating}</td>
+                  <td>${c.vehicle ? c.vehicle.model : 'Standard Car'}</td>
+                  <td class="mono">${c.h3Index || '-'}</td>
+                </tr>
+              `;
+            });
+            matchBody.innerHTML = html;
+            addLog('d-match', `[MATCHING] Successfully matched Top ${list.length} drivers! Closest: ${list[0].driverName} (${list[0].distanceKm} km, ETA: ${list[0].etaMinutes}m)`);
+          }
+
+          // Refresh map pins and table highlight
+          for (const id in drivers) {
+            updateDriverMarker(id);
+          }
+          renderDriverTable();
+        } else {
+          addLog('d-err', `[MATCHING] Failed: ${json.error?.message || 'Unknown error'}`);
+        }
+      } catch (err) {
+        addLog('d-err', `[MATCHING] Network error: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = '⚡ Test Matching (Top 8)';
+      }
+    }
+
+    function focusDriver(driverId) {
+      const d = drivers[driverId];
+      if (d && d.lat && d.lng && map) {
+        map.panTo([d.lat, d.lng]);
+        if (driverMarkers[driverId]) {
+          driverMarkers[driverId].openPopup();
+        }
+      }
+    }
+
+    // Toggle Simulator API
+    async function toggleSimulator() {
+      const btn = document.getElementById('btnToggleSim');
+      btn.disabled = true;
+
+      try {
+        if (!isSimulatorRunning) {
+          const res = await fetch('/api/v1/simulator/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ centerLat: riderLat, centerLng: riderLng, intervalMs: 2500 })
+          });
+          const json = await res.json();
+          if (json.success) {
+            isSimulatorRunning = true;
+            btn.innerText = '⏹ Stop Simulator';
+            addLog('d-sys', '[SIMULATOR] Started 7 simulated drivers (D2..D8) around pickup.');
+          }
+        } else {
+          const res = await fetch('/api/v1/simulator/stop', { method: 'POST' });
+          const json = await res.json();
+          if (json.success) {
+            isSimulatorRunning = false;
+            btn.innerText = '▶ Start Simulator';
+            addLog('d-sys', '[SIMULATOR] Stopped simulator.');
+          }
+        }
+        fetchSystemStatus();
+      } catch (e) {
+        addLog('d-err', `[SIMULATOR] Error: ${e.message}`);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // Fetch System Health Status (/api/v1/system/status)
+    async function fetchSystemStatus() {
+      try {
+        const res = await fetch('/api/v1/system/status');
+        const json = await res.json();
+        if (json.success) {
+          const s = json.data;
+          
+          // Redis dot
+          const dotRedis = document.getElementById('dotRedis');
+          dotRedis.className = 'dot ' + (s.redis === 'connected' ? 'online' : 'offline');
+
+          // Postgres dot
+          const dotPostgres = document.getElementById('dotPostgres');
+          dotPostgres.className = 'dot ' + (s.postgres === 'connected' ? 'online' : 'offline');
+
+          // Simulator status
+          if (s.simulator) {
+            isSimulatorRunning = s.simulator.isRunning;
+            const dotSim = document.getElementById('dotSim');
+            dotSim.className = 'dot ' + (isSimulatorRunning ? 'online' : 'warning');
+            document.getElementById('labelSim').innerText = isSimulatorRunning ? `Simulator (${s.simulator.driverCount})` : 'Simulator (Off)';
+            document.getElementById('btnToggleSim').innerText = isSimulatorRunning ? '⏹ Stop Simulator' : '▶ Start Simulator';
+          }
+        }
+      } catch (e) {
+        console.warn('System status fetch failed:', e);
+      }
+    }
+
+    // Connect to Backend Socket.IO
+    function initSocket() {
+      const socket = io();
+
+      socket.on('connect', () => {
+        document.getElementById('dotSocket').className = 'dot online';
+        addLog('d-sys', `[SOCKET] Connected to realtime pipeline. ID: ${socket.id}`);
+      });
+
+      socket.on('disconnect', () => {
+        document.getElementById('dotSocket').className = 'dot offline';
+        addLog('d-sys', '[SOCKET] Disconnected from realtime pipeline.');
+      });
+
+      // 1. High-Frequency Location Updates
+      socket.on('location:update', (data) => {
+        if (!data || !data.driverId) return;
+        const id = data.driverId;
+
+        // If newly discovered driver
+        if (!drivers[id]) {
+          drivers[id] = {
+            code: 'D?',
+            name: `Driver ${id.slice(-4)}`,
+            isReal: false,
+            status: data.status || 'ONLINE',
+            lat: data.latitude,
+            lng: data.longitude,
+            h3: data.h3Index,
+            speed: data.speed,
+            heading: data.heading,
+            dist: null
+          };
+        }
+
+        const d = drivers[id];
+        d.lat = data.latitude;
+        d.lng = data.longitude;
+        d.h3 = data.h3Index;
+        d.speed = data.speed;
+        d.heading = data.heading;
+        d.status = data.status || 'ONLINE';
+        d.dist = haversine(riderLat, riderLng, d.lat, d.lng);
+
+        updateDriverMarker(id);
+        renderDriverTable();
+
+        addLog('d-loc', `[${d.code}] loc (${d.lat.toFixed(4)}, ${d.lng.toFixed(4)}) • H3: ${d.h3} • ${d.speed || 0} km/h`);
+      });
+
+      // 2. Driver Status Changes
+      socket.on('driver:status_changed', (data) => {
+        if (data && data.driverId && drivers[data.driverId]) {
+          drivers[data.driverId].status = data.status;
+          renderDriverTable();
+          updateDriverMarker(data.driverId);
+          addLog('d-sys', `[${drivers[data.driverId].code}] status changed -> ${data.status}`);
+        }
+      });
+
+      // 3. Ride State Changes
+      socket.on('ride:status_changed', (data) => {
+        if (data && data.rideId) {
+          addLog('d-ride', `[RIDE] ${data.rideId.slice(0, 8)} status -> ${data.status}`);
+        }
+      });
+
+      // 4. Errors
+      socket.on('error', (err) => {
+        addLog('d-err', `[ERROR] ${err.event || 'ws'}: ${err.message || JSON.stringify(err)}`);
+      });
+    }
+
+    // Initialize application on load
+    window.addEventListener('DOMContentLoaded', () => {
+      initMap();
+      updateDistances();
+      for (const id in drivers) {
+        updateDriverMarker(id);
+      }
+      renderDriverTable();
+      initSocket();
+      fetchSystemStatus();
+
+      // Poll system health every 5s
+      setInterval(fetchSystemStatus, 5000);
+
+      // Auto-trigger initial matching after 1s
+      setTimeout(runMatching, 1200);
+    });
+  </script>
+</body>
+</html>

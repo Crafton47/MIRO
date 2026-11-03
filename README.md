@@ -1,138 +1,105 @@
-> D1 phone GPS setup: see [NETWORK_SETUP.md](NETWORK_SETUP.md) for trusted HTTPS, phone certificate installation, current URLs, and diagnostics.
-
-> **2026-11-03 audit update:** Authentication, demo opt-in and phone connectivity behavior changed. Use [MIRO_TEST_REPORT.md](MIRO_TEST_REPORT.md) for current startup/HTTPS instructions and [MIRO_CHANGELOG.md](MIRO_CHANGELOG.md) for API changes. Older no-login, simulated D1 or insecure-origin flag instructions below are historical and superseded.
-
 # MIRO — Real-Time Ride-Hailing Platform (Kolkata MVP)
 
-A modular ride-hailing platform MVP built with Node.js, Express, TypeScript, Socket.IO, PostgreSQL, Redis, Leaflet, and H3 spatial indexing, localized for Kolkata, West Bengal.
+[![Backend Tests](https://img.shields.io/badge/backend%20tests-14%20passed-brightgreen)](#running-tests)
+[![Frontend Tests](https://img.shields.io/badge/frontend%20tests-23%20passed-brightgreen)](#running-tests)
+[![Geospatial Tests](https://img.shields.io/badge/geospatial%20tests-31%20passed-brightgreen)](#running-tests)
 
-This project handles real-time driver tracking, spatial matching, and the complete ride lifecycle for a real rider, a real driver sending live GPS from a mobile phone (D1), and 7 simulated background fleet drivers (D2–D8).
+A full-stack, real-time ride-hailing MVP built with **Node.js, Express, TypeScript, Socket.IO, PostgreSQL, Redis, Leaflet, and Uber H3 spatial indexing**, localized for Kolkata, West Bengal.
+
+MIRO handles real-time driver tracking, nearest-driver spatial matching, and the complete ride lifecycle for:
+- **1 Real Rider**: Booking and tracking rides in real-time via the web interface.
+- **1 Real Driver (D1)**: Broadcasting authenticated physical GPS telemetry from an Android smartphone over trusted HTTPS/WSS.
+- **7 Simulated Background Drivers (D2–D8)**: Auto-started background fleet moving along road-accurate waypoints in Kolkata, updating through Redis and participating in H3 spatial matching.
+
+> **Physical Android GPS Setup:** See [NETWORK_SETUP.md](NETWORK_SETUP.md) for local network configuration, trusted CA certificate installation (`mkcert`), and mobile diagnostics.
 
 ---
 
 ## Table of Contents
-- [What the Project Does](#what-the-project-does)
 - [Tech Stack](#tech-stack)
-- [Key Design Decisions](#key-design-decisions)
+- [Key Architectural Decisions](#key-architectural-decisions)
   - [Why Redis for Live Locations?](#why-redis-for-live-locations)
   - [Why Uber H3 for Spatial Indexing?](#why-uber-h3-for-spatial-indexing)
-  - [Why PostgreSQL for Persistent Data?](#why-postgresql-for-persistent-data)
-  - [Why Simulate Drivers D2–D8?](#why-simulate-drivers-d2d8)
-- [How Matching Works](#how-matching-works)
+  - [Dual Driver Model (Real D1 vs Simulated D2–D8)](#dual-driver-model-real-d1-vs-simulated-d2d8)
+- [How Spatial Matching Works](#how-spatial-matching-works)
 - [System Architecture](#system-architecture)
-- [Developer Monitoring Dashboard](#developer-monitoring-dashboard)
+- [Developer Diagnostics Dashboard](#developer-diagnostics-dashboard)
 - [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [1. Start Database & Redis](#1-start-database--redis)
-  - [2. Install Dependencies](#2-install-dependencies)
-  - [3. Configure Environment Variables](#3-configure-environment-variables)
-  - [4. Setup Database Schema & Seed Data](#4-setup-database-schema--seed-data)
-  - [5. Run the Backend](#5-run-the-backend)
-- [Running the Simulator](#running-the-simulator)
+  - [1. Prerequisites](#1-prerequisites)
+  - [2. Start PostgreSQL & Redis Containers](#2-start-postgresql--redis-containers)
+  - [3. Install Dependencies](#3-install-dependencies)
+  - [4. Environment Configuration](#4-environment-configuration)
+  - [5. Database Schema & Seed Data](#5-database-schema--seed-data)
+  - [6. Start the Full Application](#6-start-the-full-application)
+- [Default Demo Credentials](#default-demo-credentials)
 - [Running Tests](#running-tests)
 - [API & WebSocket Overview](#api--websocket-overview)
-
----
-
-## What the Project Does
-
-The backend coordinates the core workflows of an on-demand ride-hailing platform:
-
-1. **Driver Ingestion & Tracking**: Ingests GPS telemetry over WebSockets (Socket.IO) and indexes driver locations into spatial hexagonal cells in real time.
-2. **Driver Availability**: Tracks driver states (`ONLINE`, `OFFLINE`, `IN_RIDE`) in memory with immediate updates broadcast across the system.
-3. **Spatial Driver Matching**: Finds and ranks the top 8 nearest available drivers around a rider's pickup location using Uber H3 hexagonal rings and haversine distance.
-4. **Ride Lifecycle State Machine**: Manages strict ride transitions:
-   `REQUESTED` → `SEARCHING` → `DRIVER_ASSIGNED` → `DRIVER_ARRIVING` → `DRIVER_ARRIVED` → `IN_PROGRESS` → `COMPLETED` (or `CANCELLED`).
-5. **Fare Calculation**: Calculates fares based on base fare, distance traveled, and duration.
-6. **Multi-Driver Fleet**: Supports 1 real driver (D1) connected via smartphone WebSocket alongside 7 simulated drivers (D2–D8) moving along realistic paths.
+- [Documentation Reference](#documentation-reference)
 
 ---
 
 ## Tech Stack
 
-| Component | Technology | Role |
+| Layer | Technology | Purpose |
 | :--- | :--- | :--- |
-| **Runtime & Language** | Node.js (v20+) & TypeScript | Strongly-typed backend service |
+| **Backend Runtime** | Node.js (v20+) & TypeScript | Strongly-typed backend service |
 | **HTTP Framework** | Express 4 | REST API routing and middleware |
-| **Real-Time Layer** | Socket.IO 4 | Bidirectional WebSocket communication for GPS and ride events |
-| **Relational Database** | PostgreSQL 16 + PostGIS | Persistent storage for users, drivers, vehicles, and rides |
-| **ORM** | Prisma 5 | Schema modeling, migrations, and database queries |
-| **In-Memory Store** | Redis 7 (`ioredis`) | High-frequency driver GPS, H3 cell sets, and active ride state |
-| **Spatial Indexing** | `h3-js` (Resolution 8) | Hexagonal spatial indexing and k-ring candidate searches |
-| **Validation** | Zod | Runtime request and payload validation |
-| **Testing** | Jest & Supertest | Unit, integration, and API contract test suites |
+| **Real-Time WebSockets** | Socket.IO 4 | Low-latency bi-directional GPS streaming and ride lifecycle events |
+| **Relational Database** | PostgreSQL 16 + PostGIS | ACID storage for users, vehicles, drivers, and immutable completed rides |
+| **ORM** | Prisma 5 | Type-safe database queries and migrations |
+| **In-Memory Store** | Redis 7 (`ioredis`) | High-throughput transient GPS caches, online sets, and H3 cell indexes |
+| **Spatial Indexing** | Uber `h3-js` (Resolution 8) | Discrete global hexagonal grid for nearest-driver radial search |
+| **Validation** | Zod | Runtime payload verification for HTTP and WebSocket events |
+| **Frontend** | Vanilla JS & Vite | Responsive mobile-first UI with Leaflet interactive maps and OSRM routing |
 
 ---
 
-## Key Design Decisions
+## Key Architectural Decisions
 
 ### Why Redis for Live Locations?
-In ride-hailing systems, active drivers emit GPS updates every 2 to 4 seconds. Writing every update directly to a relational database like PostgreSQL causes high disk I/O, write lock contention, and rapid table bloat.
+In ride-hailing platforms, active drivers broadcast GPS telemetry every 2–3 seconds. Writing each coordinate directly to a relational database creates extreme disk I/O, write-lock contention, and rapid table bloat.
 
-Instead, transient driver locations are stored in Redis using key hashes (`driver:location:<id>`) and set memberships (`h3:<cell_id>:drivers`). Redis operates in-memory with sub-millisecond latency, making it ideal for high-throughput location updates. Driver locations are kept in Redis while active, and only completed ride summaries and durable state changes are persisted to PostgreSQL.
+Instead, transient driver locations are stored in Redis using key hashes (`driver:location:<id>`) and spatial set memberships (`h3:<cell_id>:drivers`). Redis operates in-memory with sub-millisecond latency. Driver locations reside in Redis while active, and only durable business state transitions and completed ride receipts are committed to PostgreSQL.
 
 ### Why Uber H3 for Spatial Indexing?
-Uber H3 divides the surface of the earth into a discrete global grid of hexagons. We use **Resolution 8**, where each hexagonal cell has an average area of ~0.74 km² and an edge length of approximately 460 meters.
+Uber H3 divides the globe into a discrete hexagonal hierarchical grid. MIRO operates at **Resolution 8**, where each hexagonal cell spans ~0.74 km² with an edge length of ~460 meters:
+- **Equidistant Neighbors**: Unlike square grids where diagonals are $\sqrt{2}\times$ further away, all 6 neighbors of a hexagon share identical centroid-to-centroid distances.
+- **Concentric Ring Expansion**: Expanding search rings ($k=0, 1, 2, \dots$) radiates outward in circular tiers.
+- **O(1) Set Lookups**: Drivers map directly to cell index strings in Redis sets, completely bypassing full-table geospatial coordinate scans.
 
-Hexagons have unique geometric advantages over square grids:
-- All neighboring hexagons share identical centroid-to-centroid distances.
-- K-ring expansion (`gridDisk(originCell, k)`) expands concentrically outward in clean circular tiers.
-- Drivers are mapped directly to an H3 cell index string. Finding candidate drivers simply requires reading the driver IDs stored in the Redis set for that cell and its neighboring rings, avoiding expensive full-table distance scans.
-
-### Why PostgreSQL for Persistent Data?
-PostgreSQL provides ACID transactions and strict referential integrity for entities that must survive server restarts:
-- User accounts (riders and drivers) with hashed passwords.
-- Driver profiles and vehicle records.
-- Completed ride records, billing receipts, and timestamps.
-- PostGIS extensions provide spatial capabilities for auditing or historical geospatial queries.
-
-### Why Simulate Drivers D2–D8?
-Testing an on-demand matching system with multiple drivers normally requires 8 physical smartphones moving simultaneously in different locations.
-
-To enable realistic testing and classroom demonstrations with a single laptop and one smartphone:
-- **D1** is reserved for the real driver (connected via phone browser or mobile app).
-- **D2 through D8** are simulated background drivers that generate realistic telemetry.
-- **Identical Pipeline**: The simulator emits the exact same WebSocket payloads (`driver:location`) to the backend as a real phone. The backend treats simulated drivers identically to real drivers.
+### Dual Driver Model (Real D1 vs Simulated D2–D8)
+Testing multi-driver spatial dispatch typically requires several physical smartphones moving across a city. MIRO solves this using a strict dual-driver architecture:
+1. **Real Driver (D1)**: Reserved strictly for a physical mobile phone. Coordinates arrive from the device's Geolocation API over HTTPS/WSS. D1 is **never** automated or snapped by the simulator.
+2. **Simulated Drivers (D2–D8)**: Auto-started on backend launch in development (`DEMO_MODE=true`). They progress along real road segments in Kolkata, push updates to Redis and Socket.IO, and participate in H3 matching on equal footing with D1.
 
 ---
 
-## How Matching Works
-
-When a rider requests a ride:
+## How Spatial Matching Works
 
 ```
-Rider Pickup GPS (lat, lng)
+Rider Pickup Coordinates (lat, lng)
            │
            ▼
 Convert GPS to H3 Cell (Resolution 8)
            │
            ▼
-Expand k-ring outward (k = 0, 1, 2, 3...)
+Expand concentric k-rings outward (k = 0, 1, 2...)
            │
            ▼
-Fetch Driver IDs from Redis sets: `h3:<cell_id>:drivers`
+Retrieve Driver IDs from Redis sets: `h3:<cell_id>:drivers`
            │
            ▼
-Filter drivers by availability (`ONLINE` and not `IN_RIDE`)
+Filter drivers by status (`ONLINE` and not `IN_RIDE`) & freshness (< 60s)
            │
            ▼
-Fetch each driver's live GPS from Redis: `driver:location:<id>`
+Retrieve driver locations from Redis: `driver:location:<id>`
            │
            ▼
-Calculate Haversine distance & estimated ETA
+Calculate Haversine distance & ETA to pickup
            │
            ▼
-Sort by shortest distance / ETA
-           │
-           ▼
-Return Top 8 Candidate Drivers
+Sort ascending by distance & assign the nearest eligible candidate
 ```
-
-1. **Pickup Cell**: The pickup coordinates are converted to an H3 resolution 8 cell.
-2. **Ring Search**: The algorithm queries the center cell ($k=0$). If fewer candidates are found than desired, it expands to concentric rings ($k=1, 2, ...$) up to a maximum radius.
-3. **Candidate Retrieval**: Driver IDs indexed in those cells are retrieved from Redis sets.
-4. **Availability Filter**: Drivers are checked to confirm they are `ONLINE` and not already assigned to another ride.
-5. **Ranking**: The haversine formula calculates straight-line distance from the pickup point. Candidates are sorted ascending by distance, and the top 8 are returned.
 
 ---
 
@@ -144,177 +111,182 @@ Return Top 8 Candidate Drivers
                        | Real Driver D1 (Phone)|
                        +-----------+-----------+
                                    |
-                                   | HTTP / WebSocket
+                                   | HTTPS / WebSocket (WSS)
                                    v
 +------------------+     +---------+-----------+
 | 7-Driver         |---->|  Express HTTP &     |
 | Simulator (D2-D8)|     |  Socket.IO Server   |
 +------------------+     +----+-----------+----+
-                              |           |
-            +-----------------+           +-----------------+
-            |                                               |
-            v                                               v
-+-----------+-----------+                       +-----------+-----------+
-|      Redis 7          |                       |   PostgreSQL 16       |
-| (localhost:6380)      |                       |   (localhost:5433)    |
-|                       |                       |                       |
-| - driver:location:<id>|                       | - Users (Rider/Driver)|
-| - driver:status:<id>  |                       | - Drivers & Vehicles  |
-| - h3:<cell_id>:drivers|                       | - Rides (Persistent)  |
-| - ride:<id>:state     |                       | - Prisma Migrations   |
-+-----------------------+                       +-----------------------+
+                               |           |
+            +------------------+           +------------------+
+            |                                                 |
+            v                                                 v
++-----------+-----------+                         +-----------+-----------+
+|      Redis 7          |                         |   PostgreSQL 16       |
+| (localhost:6380)      |                         |   (localhost:5433)    |
+| - driver:location:<id>|                         | - Users & Auth        |
+| - drivers:online      |                         | - Drivers & Vehicles  |
+| - h3:<cell_id>:drivers|                         | - Rides & Receipts    |
+| - ride:<id>:state     |                         | - Prisma Migrations   |
++-----------------------+                         +-----------------------+
 ```
 
 ---
 
-## Developer Monitoring Dashboard
+## Developer Diagnostics Dashboard
 
-A lightweight, built-in developer dashboard is included for visually demonstrating and debugging the backend in real time.
+A built-in developer dashboard is available for real-time fleet observation and matching verification:
 
 - **URL**: `http://localhost:3000/dashboard`
 - **Features**:
-  - Interactive Leaflet map centered on the operational area (Hyderabad / Hitec City).
-  - Real-time driver markers for D1 (real) and D2–D8 (simulated) updating via live WebSockets.
-  - Interactive H3 hexagonal cell overlays showing active driver counts per cell.
-  - Live system connectivity badges (Backend, Redis, PostgreSQL, Socket.IO).
-  - Simulator control (Start / Stop 7-driver simulation directly from the browser).
-  - Test rider matching simulation: Click anywhere on the map to set a pickup location and visualize the top ranked candidate drivers.
+  - Live Leaflet map centered on Central Kolkata (`22.5646, 88.3510`).
+  - Real-time pins for real driver D1 (blue) and simulated fleet D2–D8 (gold/gray).
+  - Interactive H3 hexagonal cell overlays showing active driver distribution.
+  - Live connectivity badges (Backend, Redis, PostgreSQL, Socket.IO, Simulator).
+  - One-click spatial lookup test returning the Top 8 candidate drivers ranked by pickup distance.
 
 ---
 
 ## Getting Started
 
-### Prerequisites
-- [Node.js](https://nodejs.org/) (v18 or v20+ recommended)
-- [Docker & Docker Compose](https://www.docker.com/)
+### 1. Prerequisites
+- **Node.js**: v20 or higher (`node -v`)
+- **Docker Desktop**: Running locally (`docker ps`)
+- **mkcert** *(optional, for phone testing)*: For trusted LAN SSL certificates
 
-### 1. Start Database & Redis
-The repository includes a `docker-compose.yml` configured to avoid port conflicts with host services:
-- PostgreSQL runs on host port **5433** (maps to internal 5432)
-- Redis runs on host port **6380** (maps to internal 6379)
+### 2. Start PostgreSQL & Redis Containers
+MIRO uses dedicated ports to prevent host service collisions:
+- **PostgreSQL**: Port `5433`
+- **Redis**: Port `6380`
 
-```bash
+```powershell
+# From the project root
 cd backend
-docker-compose up -d
+docker compose up -d
+cd ..
 ```
 
-Verify containers are running:
-```bash
-docker ps
+Verify the containers are healthy:
+```powershell
+docker ps --filter "name=uber"
 ```
 
-### 2. Install Dependencies
-```bash
-cd backend
+### 3. Install Dependencies
+```powershell
+# Install root, backend, and frontend packages
 npm install
+npm --prefix backend install
+npm --prefix frontend install
 ```
 
-### 3. Configure Environment Variables
-Copy `.env.example` to `.env` if not already present:
-```bash
-cp .env.example .env
-```
-
-Ensure the connection strings match the Docker Compose port mappings:
+### 4. Environment Configuration
+Ensure `backend/.env` is configured (matches Docker ports):
 ```env
 PORT=3000
 NODE_ENV=development
-DATABASE_URL="postgresql://postgres:postgres@localhost:5433/uber_db?schema=public"
-REDIS_URL="redis://localhost:6380"
-JWT_SECRET="your-super-secret-jwt-key"
+DATABASE_URL=postgresql://postgres:postgrespassword@localhost:5433/uber_db?schema=public
+REDIS_URL=redis://localhost:6380
+JWT_SECRET=super_secret_jwt_key_for_uber_mvp_2026
+H3_RESOLUTION=8
+MAX_CANDIDATE_DRIVERS=8
+SIMULATOR_NUM_DRIVERS=7
+DEMO_MODE=true
+CENTER_LAT=22.5646
+CENTER_LNG=88.3510
 ```
 
-### 4. Setup Database Schema & Seed Data
-Push the schema to PostgreSQL and seed initial test accounts:
-```bash
-npx prisma db push
-npx prisma db seed
+### 5. Database Schema & Seed Data
+Initialize the database tables and demo accounts:
+```powershell
+npm --prefix backend run prisma:push
+npm --prefix backend run prisma:seed
 ```
 
-This seeds:
-- Test Rider (`rider@uber.local` / `password123`)
-- Real Driver D1 (`driver1@uber.local` / `password123`)
-- Simulated Drivers D2 through D8 with vehicle records
+### 6. Start the Full Application
+Start both the backend service and Vite frontend together:
+```powershell
+# Production build check
+npm run build
 
-### 5. Run the Backend
-Start the server in development mode (with auto-reload):
-```bash
-npm run dev
+# Start both services concurrently
+npm run start:dev
 ```
-
-The server will start on `http://localhost:3000`.
-- Health check: `http://localhost:3000/health`
-- System status: `http://localhost:3000/api/v1/system/status`
-- Monitoring Dashboard: `http://localhost:3000/dashboard`
+- **Rider & Driver App**: `https://localhost:5173` (or `https://<YOUR_LAN_IP>:5173`)
+- **Backend API**: `http://localhost:3000`
+- **Fleet Diagnostics Dashboard**: `http://localhost:3000/dashboard`
 
 ---
 
-## Running the Simulator
+## Default Demo Credentials
 
-The simulator moves drivers D2 through D8 along realistic waypoint loops, emitting coordinates over WebSocket every 3 seconds.
+All test accounts share the password: `Password123!`
 
-You can run it in two ways:
-
-**Option A: Through the Developer Dashboard**
-Open `http://localhost:3000/dashboard` and click **"Start Simulator"**.
-
-**Option B: Via CLI**
-In a separate terminal window:
-```bash
-cd backend
-npm run simulator
-```
+| Role | Name | Email | Details |
+| :--- | :--- | :--- | :--- |
+| **Rider** | Saptarshi Roy | `rider@demo.com` | Test rider in Kolkata |
+| **Driver 1 (Real)** | Debashis Mukherjee | `driver1@demo.com` | Physical Android GPS driver |
+| **Driver 2 (Simulated)** | Rajesh Sharma | `driver2@demo.com` | Auto-simulated sedan |
+| **Driver 3 (Simulated)** | Amit Patel | `driver3@demo.com` | Auto-simulated sedan |
+| **Driver 4 (Simulated)** | Sneha Banerjee | `driver4@demo.com` | Auto-simulated SUV |
+| **Driver 5 (Simulated)** | Vikram Singh | `driver5@demo.com` | Auto-simulated sedan |
+| **Driver 6 (Simulated)** | Pooja Das | `driver6@demo.com` | Auto-simulated sedan |
+| **Driver 7 (Simulated)** | Rahul Ghosh | `driver7@demo.com` | Auto-simulated SUV |
+| **Driver 8 (Simulated)** | Ananya Sen | `driver8@demo.com` | Auto-simulated sedan |
 
 ---
 
 ## Running Tests
 
-The test suite covers unit logic, H3 spatial calculations, fare estimation, and end-to-end ride lifecycle state transitions:
+MIRO includes automated test suites covering backend unit/integration logic, frontend reliability, geospatial math, and headless browser workflows:
 
-```bash
-cd backend
-
-# Run all test suites
+```powershell
+# 1. Run root backend & frontend unit test suites (109 tests)
 npm test
 
-# Run tests with coverage
-npm run test:coverage
+# 2. Run live frontend geospatial & OSRM routing tests (31 tests)
+npm --prefix frontend test
 
-# Run TypeScript type check
-npx tsc --noEmit
+# 3. Run headless browser CDP test (Edge/Chrome automation)
+npm --prefix frontend run test:browser
 
-# Validate production build
-npm run build
+# 4. Run authoritative live ride lifecycle verification
+npx --prefix backend jest tests/live_lifecycle.test.ts
 ```
 
 ---
 
 ## API & WebSocket Overview
 
-### Core REST Endpoints (`/api/v1`)
-- `POST /auth/register` - Create rider or driver account
-- `POST /auth/login` - Authenticate and receive JWT
-- `GET /drivers/nearby?latitude=...&longitude=...` - Query top 8 candidate drivers via H3
-- `PATCH /drivers/:id/status` - Update driver availability status
-- `POST /rides` - Request a new ride
-- `GET /rides/:id` - Fetch ride details and status
-- `PATCH /rides/:id/accept` - Driver accepts a ride
-- `PATCH /rides/:id/start` - Driver starts the trip
-- `PATCH /rides/:id/complete` - Driver completes the trip and finalizes fare
-- `PATCH /rides/:id/cancel` - Cancel a ride
-- `GET /system/status` - Connectivity health for Redis, PostgreSQL, and Socket.IO
+### REST Endpoints (`/api/v1`)
+- `POST /api/v1/auth/login` - Authenticate and receive JWT session
+- `GET /api/v1/drivers/nearby?latitude=...&longitude=...&radiusKm=8` - Top 8 nearest drivers via H3
+- `POST /api/v1/rides/estimate` - Fare estimate based on pickup and destination
+- `POST /api/v1/rides` - Request a ride and assign closest eligible driver
+- `GET /api/v1/rides/:id` - Fetch live ride state and driver telemetry
+- `PATCH /api/v1/rides/:id/accept` - Driver accepts ride offer
+- `PATCH /api/v1/rides/:id/arrive` - Driver marks arrived at pickup
+- `PATCH /api/v1/rides/:id/start` - Driver begins the trip
+- `PATCH /api/v1/rides/:id/complete` - Driver completes trip and finalizes fare
+- `PATCH /api/v1/rides/:id/cancel` - Cancel active ride request
+- `GET /api/v1/system/status` - Health check and simulator diagnostics
 
 ### WebSocket Events (`Socket.IO`)
 | Event | Direction | Payload Description |
 | :--- | :--- | :--- |
-| `driver:location` | Client → Server | Driver GPS update `{ driverId, latitude, longitude, heading, speed }` |
-| `driver:online` | Client → Server | Driver marks status as online `{ driverId }` |
-| `driver:offline` | Client → Server | Driver marks status as offline `{ driverId }` |
-| `driver:matched` | Server → Driver | Notifies matched driver of a ride request `{ driverId, rideId }` |
-| `ride:request` | Client → Server | Rider requests ride `{ rideId, pickupLat, pickupLng, destLat, destLng }` |
-| `ride:accepted` | Client → Server | Driver accepts ride `{ rideId, driverId }` |
-| `ride:started` | Client → Server | Trip begins `{ rideId, driverId }` |
-| `ride:completed` | Client → Server | Trip finishes `{ rideId, driverId, finalFare }` |
-| `ride:cancelled` | Client → Server | Trip cancelled `{ rideId, cancelledBy, reason }` |
-| `location:update` | Server → All | Broadcast of updated coordinates for map display |
-| `ride:status_changed` | Server → All | Broadcast when a ride changes state |
+| `driver:location` | Driver → Server | Authenticated GPS reading `{ driverId, latitude, longitude, heading, speed }` |
+| `driver:online` | Driver → Server | Mark driver availability online |
+| `driver:offline` | Driver → Server | Mark driver availability offline |
+| `location:update` | Server → Rider/Fleet | High-frequency coordinate broadcast for map marker positioning |
+| `ride:status_changed` | Server → All | Broadcast of ride state machine updates |
+
+---
+
+## Documentation Reference
+
+- **[NETWORK_SETUP.md](NETWORK_SETUP.md)**: Mobile Android HTTPS trust setup, local IP binding, and troubleshooting.
+- **[docs/API.md](docs/API.md)**: Detailed REST API endpoint specification.
+- **[docs/WEBSOCKET.md](docs/WEBSOCKET.md)**: WebSocket protocols, event payloads, and rate limits.
+- **[docs/MATCHING.md](docs/MATCHING.md)**: H3 resolution calculations and nearest-driver dispatch policy.
+- **[docs/DATABASE.md](docs/DATABASE.md)**: PostgreSQL schemas, Prisma models, and Redis keyspace design.
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: Component interactions and lifecycle state machines.
+- **[docs/PHYSICAL_DEVICE_TEST_CHECKLIST.md](docs/PHYSICAL_DEVICE_TEST_CHECKLIST.md)**: Step-by-step checklist for real phone field testing.

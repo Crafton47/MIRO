@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MIRO — Ride Your Way</title>
+  <meta name="description" content="MIRO — Real-time ride-hailing in Kolkata with live GPS tracking, road routing, and instant driver dispatch." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+  
+</head>
+<body class="rider-mode">
+  <!-- Master Application Header -->
+  <header class="app-header">
+    <div class="brand-wrapper">
+      <div class="brand-logo">
+        <span class="logo-text">MIRO</span>
+      </div>
+    </div>
+
+    <!-- Mode Switcher (Rider vs Driver Partner) -->
+    <nav class="mode-switcher" aria-label="Role Switcher">
+      <button class="switcher-tab active" id="tab-rider" data-mode="rider">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/>
+        </svg>
+        <span>Rider</span>
+      </button>
+      <button class="switcher-tab" id="tab-driver" data-mode="driver">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 2a10 10 0 0 0-10 10c0 4.4 2.9 8.2 7 9.5"/>
+          <path d="M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0-6 0"/>
+          <path d="M12 15v7"/>
+          <path d="M9 12l-6-3"/>
+          <path d="M15 12l6-3"/>
+        </svg>
+        <span>Driver Partner</span>
+      </button>
+    </nav>
+
+    <!-- Header Actions & Telemetry -->
+    <div class="header-right-tools">
+      <!-- Simulator Trigger -->
+      <button class="btn-simulator" id="btn-toggle-sim" title="Toggle 7 simulated background fleet vehicles">
+        <span class="sim-pulse-dot" id="sim-status-dot"></span>
+        <span id="sim-text">Start Fleet Simulator</span>
+      </button>
+
+      <!-- Mobile Connect & GPS Diagnostics -->
+      <button class="btn-phone-connect" id="btn-phone-connect" title="Connect mobile phone as Driver 1">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+          <line x1="12" y1="18" x2="12.01" y2="18"/>
+        </svg>
+        <span>📱 Mobile Connect</span>
+      </button>
+
+      <!-- Developer Diagnostics -->
+      <a href="/dashboard" id="link-diagnostics" target="_blank" rel="noopener noreferrer" class="link-diagnostics" title="Open Backend Diagnostic Dashboard">
+        <span>Diagnostics</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+          <polyline points="15 3 21 3 21 9"/>
+          <line x1="10" y1="14" x2="21" y2="3"/>
+        </svg>
+      </a>
+
+      <!-- Server Connection Indicator -->
+      <div class="connection-status" id="health-indicator" title="Live WebSocket connection">
+        <span class="status-beacon" id="health-dot"></span>
+        <span class="status-label" id="health-label">Checking...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Application Layout -->
+  <main class="app-layout">
+    <!-- Left Drawer / Panel (Adapts by mode: White for Rider, Charcoal for Driver) -->
+    <aside class="side-panel" id="side-panel">
+      <div class="panel-inner" id="panel-container">
+        <div id="view-rider"></div>
+        <div id="view-driver" style="display: none;"></div>
+      </div>
+    </aside>
+
+    <!-- Map Canvas -->
+    <section class="map-viewport">
+      <div id="map-container"></div>
+      
+      <!-- Minimal Map Instruction Pill -->
+      <div class="map-hint-pill">
+        <span>Click map to set pickup or destination</span>
+      </div>
+    </section>
+  </main>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

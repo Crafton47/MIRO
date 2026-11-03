@@ -6,6 +6,7 @@ export interface DriverLocationPayload {
   longitude: number;
   heading?: number;
   speed?: number;
+  accuracy?: number;
   timestamp?: number;
 }
 
@@ -16,6 +17,7 @@ export interface DriverLocationData {
   h3Index: string;
   heading: number;
   speed: number;
+  accuracy?: number;
   status: DriverStatus;
   updatedAt: number;
 }

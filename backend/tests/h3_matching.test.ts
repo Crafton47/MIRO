@@ -1,10 +1,17 @@
-import { h3Service } from '../src/services/h3/h3.service';
-import { locationService } from '../src/services/location/location.service';
-import { matchingService } from '../src/services/matching/matching.service';
+import { prisma } from '../src/config/prisma.js';
+import { beforeAll, afterAll } from '@jest/globals';
+import { describe, test, expect, jest } from '@jest/globals';
+import { h3Service } from '../src/services/h3/h3.service.js';
+import { locationService } from '../src/services/location/location.service.js';
+import { matchingService } from '../src/services/matching/matching.service.js';
 import { DriverStatus } from '@prisma/client';
 
 describe('H3 Spatial Indexing & Top 8 Candidate Driver Matching', () => {
   jest.setTimeout(15000);
+  beforeAll(() => {
+    jest.spyOn(prisma.driver, 'findUnique').mockImplementation(async ({ where }: any) => ({ id: where.id, userId: where.id, status: DriverStatus.ONLINE, rides: [], user: { name: 'Test driver' } } as any));
+  });
+  afterAll(() => jest.restoreAllMocks());
   const pickupLat = 37.7749;
   const pickupLng = -122.4194;
 

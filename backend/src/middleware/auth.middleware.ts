@@ -26,12 +26,3 @@ export function authenticate(req: Request, _res: Response, next: NextFunction): 
     next(err);
   }
 }
-
-export function authorizeRoles(...roles: string[]) {
-  return (req: Request, _res: Response, next: NextFunction): void => {
-    if (!req.user || !roles.includes(req.user.role)) {
-      throw new AppError('Insufficient permissions for this operation', 403, 'FORBIDDEN');
-    }
-    next();
-  };
-}

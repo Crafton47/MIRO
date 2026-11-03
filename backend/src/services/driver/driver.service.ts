@@ -1,3 +1,4 @@
+import { logger } from '../../utils/logger.js';
 import { prisma } from '../../config/prisma.js';
 import { AppError } from '../../utils/appError.js';
 import { getRedisClient } from '../../config/redis.js';
@@ -30,7 +31,7 @@ export class DriverService {
         },
       },
       include: {
-        user: true,
+        user: { select: { id: true, name: true, phone: true } },
         vehicle: true,
       },
     });
@@ -41,7 +42,7 @@ export class DriverService {
   public async getDriverById(driverId: string) {
     const driver = await prisma.driver.findUnique({
       where: { id: driverId },
-      include: { user: true, vehicle: true },
+      include: { user: { select: { id: true, name: true, phone: true } }, vehicle: true },
     });
 
     if (!driver) {
@@ -57,31 +58,44 @@ export class DriverService {
       throw new AppError('Driver not found', 404, 'DRIVER_NOT_FOUND');
     }
 
+    if (driver.status === DriverStatus.IN_RIDE) {
+      throw new AppError('Finish or cancel the current ride before changing availability', 409, 'DRIVER_BUSY');
+    }
     const updatedDriver = await prisma.driver.update({
-      where: { id: driverId },
+      where: { id: driverId, status: driver.status },
       data: { status },
       include: { vehicle: true },
     });
 
-    // Sync status with Redis live location hash & H3 index set
-    const redis = getRedisClient();
-    const locationKey = `driver:location:${driverId}`;
-    const locationData = await redis.hgetall(locationKey);
+    try {
+      // Sync status with Redis live location hash & H3 index set
+      const redis = getRedisClient();
+      const locationKey = `driver:location:${driverId}`;
+      const locationData = await redis.hgetall(locationKey);
 
-    if (locationData && locationData.h3Index) {
-      await redis.hset(locationKey, 'status', status);
-      if (status === DriverStatus.ONLINE) {
-        await redis.sadd(`h3:${locationData.h3Index}:drivers`, driverId);
-      } else {
-        await redis.srem(`h3:${locationData.h3Index}:drivers`, driverId);
+      if (locationData && locationData.h3Index) {
+        await redis.hset(locationKey, 'status', status);
+        if (status === DriverStatus.ONLINE) {
+          await redis.sadd(`h3:${locationData.h3Index}:drivers`, driverId);
+        } else {
+          await redis.srem(`h3:${locationData.h3Index}:drivers`, driverId);
+        }
       }
+
+      if (status === DriverStatus.ONLINE) {
+        await redis.sadd('drivers:online', driverId);
+      } else {
+        await redis.srem('drivers:online', driverId);
+      }
+    } catch {
+      logger.warn('Driver status committed; location cache synchronization deferred');
     }
 
     return updatedDriver;
   }
 
-  public async getNearbyDrivers(lat: number, lng: number, _radiusKm = 5) {
-    return matchingService.findTopCandidateDrivers(lat, lng, 8);
+  public async getNearbyDrivers(lat: number, lng: number, radiusKm = 5) {
+    return (await matchingService.findTopCandidateDrivers(lat, lng, 8)).filter(driver => driver.distanceKm <= radiusKm);
   }
 }
 

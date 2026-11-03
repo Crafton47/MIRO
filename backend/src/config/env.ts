@@ -7,7 +7,7 @@ const envSchema = z.object({
   PORT: z.string().default('3000').transform((val) => parseInt(val, 10)),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   DATABASE_URL: z.string().default('postgresql://postgres:postgrespassword@localhost:5432/uber_db?schema=public'),
-  REDIS_URL: z.string().default('redis://localhost:6380'),
+  REDIS_URL: z.string().default('redis://localhost:6379'),
   JWT_SECRET: z.string().default('super_secret_jwt_key_for_uber_mvp_2026'),
   H3_RESOLUTION: z.string().default('8').transform((val) => parseInt(val, 10)),
   MAX_CANDIDATE_DRIVERS: z.string().default('8').transform((val) => parseInt(val, 10)),
@@ -15,3 +15,11 @@ const envSchema = z.object({
 });
 
 export const env = envSchema.parse(process.env);
+if (env.NODE_ENV === 'production') {
+  if (!process.env.JWT_SECRET || env.JWT_SECRET.length < 32 || env.JWT_SECRET.includes('super_secret')) {
+    throw new Error('Production requires a unique JWT_SECRET of at least 32 characters');
+  }
+  if (!process.env.DATABASE_URL || !process.env.REDIS_URL || !process.env.CORS_ORIGINS) {
+    throw new Error('Production requires explicit database, Redis and CORS configuration');
+  }
+}

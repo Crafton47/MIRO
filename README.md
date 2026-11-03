@@ -1,8 +1,12 @@
-# Uber-Style Ride-Hailing Backend (MVP)
+> D1 phone GPS setup: see [NETWORK_SETUP.md](NETWORK_SETUP.md) for trusted HTTPS, phone certificate installation, current URLs, and diagnostics.
 
-A modular ride-hailing backend MVP built with Node.js, Express, TypeScript, Socket.IO, PostgreSQL, Redis, and Uber H3 spatial indexing.
+> **2026-11-03 audit update:** Authentication, demo opt-in and phone connectivity behavior changed. Use [MIRO_TEST_REPORT.md](MIRO_TEST_REPORT.md) for current startup/HTTPS instructions and [MIRO_CHANGELOG.md](MIRO_CHANGELOG.md) for API changes. Older no-login, simulated D1 or insecure-origin flag instructions below are historical and superseded.
 
-This project was developed for a college capstone/demo. It handles real-time driver tracking, spatial matching, and the complete ride lifecycle for a real rider, a real driver sending live GPS from a smartphone, and 7 simulated background drivers.
+# MIRO — Real-Time Ride-Hailing Platform (Kolkata MVP)
+
+A modular ride-hailing platform MVP built with Node.js, Express, TypeScript, Socket.IO, PostgreSQL, Redis, Leaflet, and H3 spatial indexing, localized for Kolkata, West Bengal.
+
+This project handles real-time driver tracking, spatial matching, and the complete ride lifecycle for a real rider, a real driver sending live GPS from a mobile phone (D1), and 7 simulated background fleet drivers (D2–D8).
 
 ---
 

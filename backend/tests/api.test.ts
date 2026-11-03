@@ -1,5 +1,6 @@
+import { describe, test, expect } from '@jest/globals';
 import request from 'supertest';
-import app from '../src/app';
+import app from '../src/app.js';
 
 describe('Express REST API Endpoints', () => {
   test('GET /health returns 200 OK', async () => {
@@ -34,10 +35,8 @@ describe('Express REST API Endpoints', () => {
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 
-  test('GET /api/v1/simulator/status returns 200 with simulator info', async () => {
+  test('demo simulator is disabled by default', async () => {
     const res = await request(app).get('/api/v1/simulator/status');
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.data).toHaveProperty('isRunning');
+    expect(res.status).toBe(404);
   });
 });

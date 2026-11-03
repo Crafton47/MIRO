@@ -2,24 +2,63 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import authRoutes from './routes/auth.routes.js';
 import driverRoutes from './routes/driver.routes.js';
 import rideRoutes from './routes/ride.routes.js';
 import simulatorRoutes from './routes/simulator.routes.js';
 import { errorHandler } from './middleware/error.middleware.js';
-import { getRedisClient } from './config/redis.js';
+import { getRedisClient, getRedisMode } from './config/redis.js';
 import { prisma } from './config/prisma.js';
 import { socketServer } from './websocket/socket.server.js';
 import { driverSimulatorService } from './services/simulator/simulator.service.js';
+import { corsOptions, demoEnabled } from './config/security.js';
+import { rateLimit } from './middleware/rateLimit.middleware.js';
 
 const app = express();
 
-app.use(cors());
-app.use(express.json());
+app.disable('x-powered-by');
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '16kb' }));
+app.use('/api', rateLimit(600));
+app.use('/api/v1/auth', rateLimit(20));
+app.use(['/api/v1/system', '/dashboard', '/api/v1/simulator'], (_req, res, next) => {
+  if (!demoEnabled) { res.sendStatus(404); return; }
+  next();
+});
+
+export function getNetworkInfo() {
+  const interfaces = os.networkInterfaces();
+  const addresses: string[] = [];
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] || []) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        addresses.push(iface.address);
+      }
+    }
+  }
+  const primaryLanIp = process.env.MIRO_LAN_IP || addresses.find(ip => ip.startsWith('192.168.')) || addresses[0] || 'localhost';
+  return {
+    lanIps: addresses,
+    primaryLanIp,
+    backendPort: 3000,
+    frontendPort: 5173,
+    mobileDriverUrl: `${process.env.MIRO_HTTPS === 'false' ? 'http' : 'https'}://${primaryLanIp}:5173`,
+    backendUrl: `http://${primaryLanIp}:3000`,
+  };
+}
 
 // Health check endpoint
 app.get('/health', (_req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Network information for laptop-mobile connectivity
+app.get('/api/v1/system/network-info', (_req, res) => {
+  res.status(200).json({
+    success: true,
+    data: getNetworkInfo(),
+  });
 });
 
 // Development-only system status check (no sensitive data exposed)
@@ -31,7 +70,7 @@ app.get('/api/v1/system/status', async (_req, res) => {
       redis.ping(),
       new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 500)),
     ]);
-    if (pong === 'PONG') redisStatus = 'connected';
+    if (pong === 'PONG') redisStatus = getRedisMode() === 'memory' ? 'memory-demo' : 'connected';
   } catch {
     redisStatus = 'disconnected';
   }

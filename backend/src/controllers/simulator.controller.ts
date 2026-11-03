@@ -1,12 +1,15 @@
+import { z } from 'zod';
 import { Request, Response, NextFunction } from 'express';
 import { driverSimulatorService } from '../services/simulator/simulator.service.js';
 
 export class SimulatorController {
   public start = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const centerLat = req.body.centerLat ? parseFloat(req.body.centerLat) : 37.7749;
-      const centerLng = req.body.centerLng ? parseFloat(req.body.centerLng) : -122.4194;
-      const intervalMs = req.body.intervalMs ? parseInt(req.body.intervalMs, 10) : 3000;
+      const { centerLat, centerLng, intervalMs } = z.object({
+        centerLat: z.number().min(-85).max(85).default(22.5646),
+        centerLng: z.number().min(-180).max(180).default(88.3510),
+        intervalMs: z.number().int().min(1000).max(60000).default(3000),
+      }).parse(req.body || {});
 
       await driverSimulatorService.start(centerLat, centerLng, intervalMs);
       res.status(200).json({

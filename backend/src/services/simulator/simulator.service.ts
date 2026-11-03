@@ -1,111 +1,179 @@
+import { prisma } from '../../config/prisma.js';
+import { demoEnabled } from '../../config/security.js';
+import { AppError } from '../../utils/appError.js';
 import { locationService } from '../location/location.service.js';
+import { rideService } from '../ride/ride.service.js';
+import { socketServer } from '../../websocket/socket.server.js';
 import { logger } from '../../utils/logger.js';
 import { DriverStatus } from '@prisma/client';
+import { Point, fetchDemoRoute, advanceOnRoad } from './roadRoute.js';
+
+type DemoDriver = Point & {
+  heading: number;
+  speedKmh: number;
+  route?: Point[];
+  index: number;
+  legKey?: string;
+  retryAt?: number;
+};
 
 export class DriverSimulatorService {
   private isRunning = false;
   private timer: NodeJS.Timeout | null = null;
-  private drivers: Map<string, { lat: number; lng: number; heading: number; speedKmh: number }> = new Map();
-
-  // Default demo center: San Francisco downtown / College Campus area
-  private centerLat = 37.7749;
-  private centerLng = -122.4194;
+  private generation = 0;
+  private stepping = false;
+  private drivers = new Map<string, DemoDriver>();
+  private centerLat = 22.5646;
+  private centerLng = 88.3510;
   private updateIntervalMs = 3000;
 
   constructor() {
     this.initDefaultDrivers();
   }
 
-  private initDefaultDrivers(count = 7, centerLat = 37.7749, centerLng = -122.4194) {
-    this.centerLat = centerLat;
-    this.centerLng = centerLng;
+  private initDefaultDrivers() {
     this.drivers.clear();
-
-    // Generate 7 simulated drivers (D2..D8) surrounding center point in small circular radii
-    for (let i = 2; i <= 1 + count; i++) {
-      const driverId = `00000000-0000-4000-a000-00000000000${i}`;
-      const angle = ((i - 2) * (2 * Math.PI)) / count;
-      const radiusDeg = 0.005 + (i % 3) * 0.003; // ~500m to 1.5km spread
-
-      const lat = centerLat + Math.sin(angle) * radiusDeg;
-      const lng = centerLng + Math.cos(angle) * radiusDeg;
-      const heading = Math.round((angle * 180) / Math.PI + 90) % 360;
-
-      this.drivers.set(driverId, {
-        lat,
-        lng,
-        heading,
-        speedKmh: 20 + (i % 4) * 5, // 20 - 35 km/h
+    for (let i = 2; i <= 8; i++) {
+      const angle = ((i - 2) * Math.PI * 2) / 7;
+      this.drivers.set(`00000000-0000-4000-a000-00000000000${i}`, {
+        lat: this.centerLat + Math.sin(angle) * 0.005,
+        lng: this.centerLng + Math.cos(angle) * 0.005,
+        heading: 0,
+        speedKmh: 30,
+        index: 0,
       });
     }
   }
 
-  /**
-   * Start the 7-driver simulator engine
-   */
   public async start(centerLat = this.centerLat, centerLng = this.centerLng, updateIntervalMs = 3000) {
+    if (!demoEnabled) {
+      throw new AppError('Demo simulator disabled', 403, 'DEMO_DISABLED');
+    }
+    if (
+      !Number.isFinite(centerLat) ||
+      Math.abs(centerLat) > 85 ||
+      !Number.isFinite(centerLng) ||
+      Math.abs(centerLng) > 180 ||
+      !Number.isInteger(updateIntervalMs) ||
+      updateIntervalMs < 1000 ||
+      updateIntervalMs > 60000
+    ) {
+      throw new AppError('Invalid simulator configuration', 400, 'INVALID_SIMULATOR_CONFIG');
+    }
     if (this.isRunning) return;
 
     this.centerLat = centerLat;
     this.centerLng = centerLng;
     this.updateIntervalMs = updateIntervalMs;
+    this.generation++;
     this.isRunning = true;
+    this.initDefaultDrivers();
 
-    this.initDefaultDrivers(7, centerLat, centerLng);
-
-    logger.info(`🚀 Driver Simulator started with ${this.drivers.size} drivers around (${centerLat}, ${centerLng})`);
-
-    // Initial positioning push
     await this.stepSimulation();
-
-    // Recurring simulation tick
-    this.timer = setInterval(async () => {
-      await this.stepSimulation();
-    }, this.updateIntervalMs);
+    if (this.isRunning) {
+      this.timer = setInterval(() => void this.stepSimulation(), this.updateIntervalMs);
+    }
   }
 
-  /**
-   * Stop simulator engine
-   */
   public stop() {
+    this.isRunning = false;
+    this.generation++;
     if (this.timer) {
       clearInterval(this.timer);
-      this.timer = null;
     }
-    this.isRunning = false;
-    logger.info('⏹️ Driver Simulator stopped');
+    this.timer = null;
   }
 
-  /**
-   * Perform one step of movement for all simulated drivers
-   */
   public async stepSimulation() {
-    for (const [driverId, state] of this.drivers.entries()) {
-      // Advance driver position along heading direction
-      const distanceMeters = (state.speedKmh * 1000 * (this.updateIntervalMs / 1000)) / 3600;
-      const deltaLat = (distanceMeters / 111111) * Math.cos((state.heading * Math.PI) / 180);
-      const deltaLng =
-        (distanceMeters / (111111 * Math.cos((state.lat * Math.PI) / 180))) *
-        Math.sin((state.heading * Math.PI) / 180);
+    if (!this.isRunning || this.stepping) return;
+    this.stepping = true;
+    const generation = this.generation;
 
-      state.lat += deltaLat;
-      state.lng += deltaLng;
-
-      // Slight heading curvature for natural movement
-      state.heading = (state.heading + (Math.random() > 0.5 ? 2 : -2) + 360) % 360;
-
-      // Ingest location update through EXACT same backend location pipeline as real drivers
-      await locationService.updateDriverLocation(
-        {
-          driverId,
-          latitude: state.lat,
-          longitude: state.lng,
-          heading: state.heading,
-          speed: state.speedKmh,
-          timestamp: Date.now(),
-        },
-        DriverStatus.ONLINE
+    try {
+      // Drivers are independent; tick overlap is prohibited and each tick has seven bounded tasks.
+      await Promise.all(
+        [...this.drivers].map(async ([driverId, state]) => {
+          try {
+            await this.stepDriver(driverId, state, generation);
+          } catch {
+            state.retryAt = Date.now() + 30000;
+            logger.warn('Demo driver paused: route, database or location service unavailable');
+          }
+        })
       );
+    } finally {
+      this.stepping = false;
+    }
+  }
+
+  private async stepDriver(driverId: string, state: DemoDriver, generation: number) {
+    // Exact allowlist is defense in depth against ever moving D1.
+    if (!/^00000000-0000-4000-a000-00000000000[2-8]$/.test(driverId)) return;
+    if ((state.retryAt || 0) > Date.now()) return;
+
+    const live = () => this.isRunning && generation === this.generation;
+    const driver = await prisma.driver.findUnique({ where: { id: driverId } });
+    if (!live() || !driver || driver.status === DriverStatus.OFFLINE) return;
+
+    const ride = await prisma.ride.findFirst({ where: { driverId, status: { notIn: ['COMPLETED', 'CANCELLED'] } } });
+    if (!live()) return;
+
+    if (ride?.status === 'DRIVER_ASSIGNED') {
+      socketServer.emitRide(await rideService.acceptRide(ride.id, driverId));
+      return;
+    }
+    if (ride?.status === 'DRIVER_ARRIVED') {
+      socketServer.emitRide(await rideService.startRide(ride.id, driverId));
+      return;
+    }
+
+    const leg = ride?.status === 'IN_PROGRESS' ? 'destination' : 'pickup';
+    if (ride && !['DRIVER_ARRIVING', 'IN_PROGRESS'].includes(ride.status)) return;
+
+    const legKey = ride ? `${ride.id}:${leg}` : 'idle';
+    const target = ride
+      ? { lat: leg === 'pickup' ? ride.pickupLat : ride.destLat, lng: leg === 'pickup' ? ride.pickupLng : ride.destLng }
+      : { lat: this.centerLat + (Math.random() - 0.5) * 0.015, lng: this.centerLng + (Math.random() - 0.5) * 0.015 };
+
+    if (!state.route || state.legKey !== legKey) {
+      const route = await fetchDemoRoute(state, target);
+      if (!live()) return;
+      // Demo origins may be snapped to the provider's road. Never applied to D1.
+      state.route = route;
+      state.index = 1;
+      state.lat = route[0].lat;
+      state.lng = route[0].lng;
+      state.legKey = legKey;
+    }
+
+    const position = advanceOnRoad(state, state.route, state.index, (state.speedKmh * this.updateIntervalMs) / 3600);
+
+    // Re-check after external routing; cancellation/reassignment must not be undone by an old tick.
+    const latest = await prisma.ride.findFirst({ where: { driverId, status: { notIn: ['COMPLETED', 'CANCELLED'] } } });
+    const latestDriver = await prisma.driver.findUnique({ where: { id: driverId } });
+    if (!live() || !latestDriver || latestDriver.status === DriverStatus.OFFLINE || latest?.id !== ride?.id || latest?.status !== ride?.status) {
+      state.route = undefined;
+      return;
+    }
+
+    state.lat = position.lat;
+    state.lng = position.lng;
+    state.heading = position.heading;
+    state.index = position.index;
+
+    const location = await locationService.updateDriverLocation(
+      { driverId, latitude: state.lat, longitude: state.lng, heading: state.heading, speed: state.speedKmh, timestamp: Date.now() },
+      latestDriver.status
+    );
+    if (!live()) return;
+
+    await socketServer.emitLocation(driverId, location);
+
+    if (position.finished) {
+      state.route = undefined;
+      if (ride) {
+        socketServer.emitRide(leg === 'pickup' ? await rideService.arriveRide(ride.id, driverId) : await rideService.completeRide(ride.id, driverId));
+      }
     }
   }
 
@@ -116,7 +184,8 @@ export class DriverSimulatorService {
       centerLat: this.centerLat,
       centerLng: this.centerLng,
       updateIntervalMs: this.updateIntervalMs,
-      drivers: Array.from(this.drivers.entries()).map(([id, data]) => ({ id, ...data })),
+      mode: 'ROAD_DEMO',
+      drivers: [...this.drivers].map(([id, { lat, lng, heading, speedKmh }]) => ({ id, lat, lng, heading, speedKmh })),
     };
   }
 }

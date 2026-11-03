@@ -1,0 +1,15 @@
+{
+  "name": "miro-ride-hailing",
+  "version": "1.0.0",
+  "description": "MIRO real-time ride-hailing platform (Kolkata MVP)",
+  "private": true,
+  "scripts": {
+    "dev": "node start-dev.js",
+    "dev:all": "node start-dev.js",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build": "npm --prefix backend run build && npm --prefix frontend run build",
+    "test": "npm --prefix backend test -- --runInBand && npm --prefix frontend run test:unit",
+    "setup:https": "powershell -NoProfile -File scripts/setup-https.ps1"
+  }
+}

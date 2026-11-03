@@ -1,3 +1,5 @@
+import { writeLocation } from './locationStore.js';
+import { AppError } from '../../utils/appError.js';
 import { getRedisClient } from '../../config/redis.js';
 import { h3Service } from '../h3/h3.service.js';
 import { DriverLocationPayload, DriverLocationData } from '../../types/index.js';
@@ -9,55 +11,35 @@ export class LocationService {
    */
   public async updateDriverLocation(
     payload: DriverLocationPayload,
-    status: DriverStatus = DriverStatus.ONLINE
+    status?: DriverStatus
   ): Promise<DriverLocationData> {
     const redis = getRedisClient();
-    const { driverId, latitude, longitude, heading = 0, speed = 0 } = payload;
+    const { driverId, latitude, longitude, heading = 0, speed = 0, accuracy, timestamp } = payload;
 
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+      throw new AppError('Invalid coordinates', 400, 'INVALID_LOCATION');
+    }
+    if (timestamp !== undefined && (!Number.isFinite(timestamp) || timestamp > Date.now() + 10_000 || timestamp < Date.now() - 60_000)) {
+      throw new AppError('Location timestamp is stale or in the future', 400, 'INVALID_TIMESTAMP');
+    }
     // 1. Calculate H3 Index at configured resolution
     const h3Index = h3Service.latLngToCell(latitude, longitude);
-    const locationKey = `driver:location:${driverId}`;
-
-    // 2. Fetch existing stored location to check for H3 cell migration
-    const existing = await redis.hgetall(locationKey);
-    const previousH3 = existing?.h3Index;
-
-    const locationData: DriverLocationData = {
-      driverId,
-      latitude,
-      longitude,
-      h3Index,
-      heading,
-      speed,
-      status: (existing?.status as DriverStatus) || status,
-      updatedAt: Date.now(),
+    const fields = {
+      driverId, latitude: String(latitude), longitude: String(longitude), h3Index,
+      heading: String(heading), speed: String(speed), accuracy: accuracy === undefined ? '' : String(accuracy),
+      status: status || '', updatedAt: String(timestamp || Date.now()),
     };
+    const saved = await writeLocation(redis, driverId, fields);
+    return this.decode(driverId, saved);
+  }
 
-    // 3. Save current location hash in Redis
-    await redis.hset(locationKey, {
-      driverId,
-      latitude: String(latitude),
-      longitude: String(longitude),
-      h3Index,
-      heading: String(heading),
-      speed: String(speed),
-      status: locationData.status,
-      updatedAt: String(locationData.updatedAt),
-    });
-
-    // 4. Update H3 mapping set if cell changed or driver newly registered
-    if (previousH3 && previousH3 !== h3Index) {
-      await redis.srem(`h3:${previousH3}:drivers`, driverId);
-    }
-    
-    // Only add to available set if driver is ONLINE
-    if (locationData.status === DriverStatus.ONLINE) {
-      await redis.sadd(`h3:${h3Index}:drivers`, driverId);
-    } else {
-      await redis.srem(`h3:${h3Index}:drivers`, driverId);
-    }
-
-    return locationData;
+  private decode(driverId: string, data: Record<string, string>): DriverLocationData {
+    return {
+      driverId, latitude: Number(data.latitude), longitude: Number(data.longitude), h3Index: data.h3Index,
+      heading: Number(data.heading || 0), speed: Number(data.speed || 0),
+      accuracy: data.accuracy ? Number(data.accuracy) : undefined,
+      status: data.status as DriverStatus, updatedAt: Number(data.updatedAt),
+    };
   }
 
   /**
@@ -68,16 +50,7 @@ export class LocationService {
     const data = await redis.hgetall(`driver:location:${driverId}`);
     if (!data || !data.latitude || !data.longitude) return null;
 
-    return {
-      driverId,
-      latitude: parseFloat(data.latitude),
-      longitude: parseFloat(data.longitude),
-      h3Index: data.h3Index,
-      heading: parseFloat(data.heading || '0'),
-      speed: parseFloat(data.speed || '0'),
-      status: (data.status as DriverStatus) || DriverStatus.OFFLINE,
-      updatedAt: parseInt(data.updatedAt || '0', 10),
-    };
+    return this.decode(driverId, data);
   }
 
   /**
@@ -89,6 +62,7 @@ export class LocationService {
     if (existing?.h3Index) {
       await redis.srem(`h3:${existing.h3Index}:drivers`, driverId);
     }
+    await redis.srem('drivers:online', driverId);
     await redis.del(`driver:location:${driverId}`);
   }
 }

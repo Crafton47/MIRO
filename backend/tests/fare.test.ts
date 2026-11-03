@@ -1,5 +1,6 @@
-import { fareService } from '../src/services/fare/fare.service';
-import { calculateHaversineDistance } from '../src/utils/geo';
+import { describe, test, expect } from '@jest/globals';
+import { fareService } from '../src/services/fare/fare.service.js';
+import { calculateHaversineDistance } from '../src/utils/geo.js';
 
 describe('FareService & Geo Utility Unit Tests', () => {
   test('calculateHaversineDistance should compute accurate distance in km', () => {
@@ -10,16 +11,17 @@ describe('FareService & Geo Utility Unit Tests', () => {
   });
 
   test('calculateFare should return correct base + distance + duration breakdown', () => {
-    const pickupLat = 37.7749;
-    const pickupLng = -122.4194;
-    const destLat = 37.7833;
-    const destLng = -122.4167;
+    // Kolkata: Esplanade to Victoria Memorial
+    const pickupLat = 22.5646;
+    const pickupLng = 88.3510;
+    const destLat = 22.5448;
+    const destLng = 88.3426;
 
     const result = fareService.calculateFare(pickupLat, pickupLng, destLat, destLng);
 
-    expect(result.estimatedFare).toBeGreaterThanOrEqual(5.0); // Min fare
+    expect(result.estimatedFare).toBeGreaterThanOrEqual(60.0); // Min fare ₹60
     expect(result.distanceKm).toBeGreaterThan(0);
     expect(result.durationMin).toBeGreaterThanOrEqual(1);
-    expect(result.currency).toBe('USD');
+    expect(result.currency).toBe('INR');
   });
 });

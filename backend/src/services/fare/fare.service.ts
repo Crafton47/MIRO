@@ -2,10 +2,10 @@ import { calculateHaversineDistance, estimateTravelTimeMinutes } from '../../uti
 import { FareEstimateResult } from '../../types/index.js';
 
 export class FareService {
-  private readonly BASE_FARE = 3.5;
-  private readonly RATE_PER_KM = 1.2;
-  private readonly RATE_PER_MIN = 0.25;
-  private readonly MIN_FARE = 5.0;
+  private readonly BASE_FARE = 50.0; // ₹50 base flag-down fare
+  private readonly RATE_PER_KM = 16.0; // ₹16 per kilometre
+  private readonly RATE_PER_MIN = 2.0; // ₹2 per minute
+  private readonly MIN_FARE = 60.0; // ₹60 minimum trip fare
 
   /**
    * Calculate estimated or final fare for a route
@@ -36,7 +36,7 @@ export class FareService {
       distanceFare,
       timeFare,
       estimatedFare,
-      currency: 'USD',
+      currency: 'INR',
     };
   }
 }

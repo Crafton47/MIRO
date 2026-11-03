@@ -16,13 +16,22 @@ export class MatchingService {
     pickupLng: number,
     maxDrivers = env.MAX_CANDIDATE_DRIVERS
   ): Promise<CandidateDriver[]> {
+    if (
+      typeof pickupLat !== 'number' ||
+      typeof pickupLng !== 'number' ||
+      !Number.isFinite(pickupLat) ||
+      !Number.isFinite(pickupLng) || Math.abs(pickupLat) > 90 || Math.abs(pickupLng) > 180
+    ) {
+      return [];
+    }
+
     const centerH3Cell = h3Service.latLngToCell(pickupLat, pickupLng);
     const redis = getRedisClient();
 
-    // Expand search ring iteratively until we find candidate drivers or reach max ring radius
+    // Expand search ring iteratively up to 8 rings (~5km radius cover)
     const candidateDriverIds = new Set<string>();
     let kRingRadius = 0;
-    const maxKRing = 4; // Up to 4 rings (~2.5km radius cover)
+    const maxKRing = 8;
 
     while (candidateDriverIds.size < maxDrivers && kRingRadius <= maxKRing) {
       const surroundingCells = h3Service.getSurroundingCells(centerH3Cell, kRingRadius);
@@ -35,40 +44,64 @@ export class MatchingService {
       kRingRadius++;
     }
 
+    // Also include any online drivers recorded in Redis to ensure no online driver is missed
+    const onlineDrivers: string[] = await redis.smembers('drivers:online');
+    for (const dId of onlineDrivers) {
+      candidateDriverIds.add(dId);
+    }
+
     if (candidateDriverIds.size === 0) {
       return [];
     }
 
     // Fetch live positions & database metadata for candidates
     const candidateDetails: CandidateDriver[] = [];
+    const now = Date.now();
+    const STALE_THRESHOLD_MS = 60_000; // 60 seconds freshness window
 
     for (const driverId of candidateDriverIds) {
       const loc = await locationService.getDriverLocation(driverId);
       if (!loc || loc.status !== DriverStatus.ONLINE) continue;
 
-      const distanceKm = calculateHaversineDistance(pickupLat, pickupLng, loc.latitude, loc.longitude);
-      const etaMinutes = estimateTravelTimeMinutes(distanceKm);
+      // Exclude invalid or default (0,0) coordinates
+      if (loc.latitude === 0 && loc.longitude === 0) continue;
+      if (!Number.isFinite(loc.latitude) || !Number.isFinite(loc.longitude) || Math.abs(loc.latitude) > 90 || Math.abs(loc.longitude) > 180) continue;
+      if (loc.accuracy !== undefined && loc.accuracy > 100) continue;
+
+      // Exclude stale location updates (> 60 seconds old)
+      if (!loc.updatedAt || loc.updatedAt > now + 10_000 || now - loc.updatedAt > STALE_THRESHOLD_MS) {
+        continue;
+      }
 
       let driverRecord: any = null;
-      if (process.env.NODE_ENV !== 'test') {
+      {
         try {
-          driverRecord = await Promise.race([
-            prisma.driver.findUnique({
-              where: { id: driverId },
-              include: { user: true, vehicle: true },
-            }),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('DB Timeout')), 300)),
-          ]);
+          driverRecord = await prisma.driver.findUnique({
+            where: { id: driverId },
+            include: { user: { select: { name: true } }, vehicle: true, rides: { where: { status: { notIn: ['COMPLETED', 'CANCELLED'] } }, select: { id: true } } },
+          });
+          if (!driverRecord) continue;
+          // Exclude drivers marked offline in DB or already assigned to an ongoing ride
+          if (
+            driverRecord &&
+            (driverRecord.status !== DriverStatus.ONLINE || (driverRecord.rides && driverRecord.rides.length > 0))
+          ) {
+            continue;
+          }
         } catch {
-          // Soft fallback when database is slow or not connected
+          continue; // Database eligibility must be confirmed.
         }
       }
+
+      // Proximity calculated strictly relative to PICKUP coordinates
+      const distanceKm = calculateHaversineDistance(pickupLat, pickupLng, loc.latitude, loc.longitude, false);
+      const etaMinutes = estimateTravelTimeMinutes(distanceKm);
 
       candidateDetails.push({
         driverId: loc.driverId,
         userId: driverRecord?.userId || loc.driverId,
         driverName: driverRecord?.user?.name || `Driver ${loc.driverId.slice(0, 4)}`,
-        rating: driverRecord?.rating || 5.0,
+        rating: driverRecord?.rating || 4.9,
         latitude: loc.latitude,
         longitude: loc.longitude,
         distanceKm,
@@ -84,11 +117,11 @@ export class MatchingService {
       });
     }
 
-    // Sort candidate drivers by distance (and ETA)
+    // Sort candidate drivers strictly ascending by distance (and ETA)
     candidateDetails.sort((a, b) => a.distanceKm - b.distanceKm);
 
     // Return maximum N drivers (Top 8)
-    return candidateDetails.slice(0, maxDrivers);
+    return candidateDetails.slice(0, maxDrivers).map(candidate => ({ ...candidate, distanceKm: Math.round(candidate.distanceKm * 100) / 100 }));
   }
 }
 

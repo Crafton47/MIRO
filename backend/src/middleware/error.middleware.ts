@@ -26,13 +26,17 @@ export function errorHandler(
       error: {
         code: 'VALIDATION_ERROR',
         message: 'Invalid request payload',
-        details: err.errors.map((e) => ({ field: e.path.join('.'), message: e.message })),
+        details: err.issues.map((e) => ({ field: e.path.join('.'), message: e.message })),
       },
     });
     return;
   }
 
-  logger.error('Unhandled Server Error:', err);
+  if (['P2025', 'P2034'].includes((err as any).code)) {
+    res.status(409).json({ success: false, error: { code: 'STATE_CONFLICT', message: 'Ride or driver state changed. Refresh and retry.' } });
+    return;
+  }
+  logger.error('Unhandled Server Error:', err.name);
 
   const isProd = process.env.NODE_ENV === 'production';
   res.status(500).json({

@@ -129,7 +129,10 @@ class App {
     await syncRide();
     window.addEventListener('pagehide', () => { gpsService.stop(); socketClient.disconnect(); });
     window.addEventListener('pageshow', event => {
-      if (event.persisted) { this.initSocketEvents(); this.syncRide?.(); }
+      if (event.persisted) {
+        socketClient.connect(); // Preserve registered event handlers on BFCache restore.
+        this.syncRide?.();
+      }
     });
     setInterval(() => {
       if (store.getState().currentMode === 'rider') this.riderView.fetchNearbyDrivers();
@@ -296,6 +299,8 @@ class App {
       if (isD1) {
         mapManager.updateSingleDriverPosition(driverId, lat, lng, heading);
         mapManager.centerOnD1Once(lat, lng);
+      } else {
+        mapManager.updateSingleSimulatedDriver(driverId, lat, lng, heading);
       }
 
       // Calculate distance strictly relative to PICKUP coordinates

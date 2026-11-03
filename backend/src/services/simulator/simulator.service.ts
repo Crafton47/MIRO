@@ -23,8 +23,8 @@ export class DriverSimulatorService {
   private generation = 0;
   private stepping = false;
   private drivers = new Map<string, DemoDriver>();
-  private centerLat = 22.5646;
-  private centerLng = 88.3510;
+  private centerLat = process.env.CENTER_LAT ? parseFloat(process.env.CENTER_LAT) : 22.5646;
+  private centerLng = process.env.CENTER_LNG ? parseFloat(process.env.CENTER_LNG) : 88.3510;
   private updateIntervalMs = 3000;
 
   constructor() {
@@ -36,12 +36,36 @@ export class DriverSimulatorService {
     for (let i = 2; i <= 8; i++) {
       const angle = ((i - 2) * Math.PI * 2) / 7;
       this.drivers.set(`00000000-0000-4000-a000-00000000000${i}`, {
-        lat: this.centerLat + Math.sin(angle) * 0.005,
-        lng: this.centerLng + Math.cos(angle) * 0.005,
-        heading: 0,
+        lat: this.centerLat + Math.sin(angle) * 0.006,
+        lng: this.centerLng + Math.cos(angle) * 0.006,
+        heading: Math.round((angle * 180) / Math.PI),
         speedKmh: 30,
         index: 0,
       });
+    }
+  }
+
+  public async publishInitialLocations() {
+    for (const [driverId, state] of this.drivers.entries()) {
+      try {
+        const driver = await prisma.driver.findUnique({ where: { id: driverId } });
+        if (!driver || driver.status === DriverStatus.OFFLINE) continue;
+        const location = await locationService.updateDriverLocation(
+          {
+            driverId,
+            latitude: state.lat,
+            longitude: state.lng,
+            heading: state.heading,
+            speed: state.speedKmh,
+            accuracy: 10,
+            timestamp: Date.now(),
+          },
+          driver.status
+        );
+        await socketServer.emitLocation(driverId, location);
+      } catch (err: any) {
+        logger.warn(`Failed to publish initial location for ${driverId}: ${err.message}`);
+      }
     }
   }
 
@@ -69,6 +93,7 @@ export class DriverSimulatorService {
     this.isRunning = true;
     this.initDefaultDrivers();
 
+    await this.publishInitialLocations();
     await this.stepSimulation();
     if (this.isRunning) {
       this.timer = setInterval(() => void this.stepSimulation(), this.updateIntervalMs);

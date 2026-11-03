@@ -12,7 +12,14 @@ class SocketClient {
   }
 
   connect() {
-    if (this.socket) return this.socket;
+    if (this.socket) {
+      // Reuse the socket and its listeners after a page is restored from cache.
+      if (!this.socket.connected && this.socket.disconnected) {
+        this.setStatus('connecting');
+        this.socket.connect();
+      }
+      return this.socket;
+    }
 
     this.setStatus('connecting');
     this.lastError = null;
@@ -56,7 +63,6 @@ class SocketClient {
   disconnect() {
     if (this.socket) {
       this.socket.disconnect();
-      this.socket = null;
       this.setStatus('disconnected');
     }
   }

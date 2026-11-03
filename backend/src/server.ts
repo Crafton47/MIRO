@@ -6,6 +6,8 @@ import { offerExpiryService } from './services/matching/offerExpiry.service.js';
 import { logger } from './utils/logger.js';
 import { prisma } from './config/prisma.js';
 import { getRedisClient, getRedisMode } from './config/redis.js';
+import { demoEnabled } from './config/security.js';
+import { driverSimulatorService } from './services/simulator/simulator.service.js';
 
 const httpServer = http.createServer(app);
 
@@ -63,6 +65,17 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   logger.info(`📡 WebSocket URL:  ws://${lanIp}:${PORT}`);
   logger.info(`==================================================`);
   checkStartupHealth().catch(() => {});
+
+  if (demoEnabled) {
+    const centerLat = process.env.CENTER_LAT ? parseFloat(process.env.CENTER_LAT) : 22.5646;
+    const centerLng = process.env.CENTER_LNG ? parseFloat(process.env.CENTER_LNG) : 88.3510;
+    driverSimulatorService.start(centerLat, centerLng).then(() => {
+      logger.info(`🤖 Simulator: 7 simulated drivers (D2..D8) active around (${centerLat}, ${centerLng})`);
+    }).catch((err: any) => {
+      logger.warn(`⚠️  Simulator: Auto-start deferred: ${err.message}`);
+    });
+    httpServer.on('close', () => driverSimulatorService.stop());
+  }
 });
 
 export { httpServer };

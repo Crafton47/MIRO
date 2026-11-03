@@ -10,6 +10,6 @@
     "dev:frontend": "npm --prefix frontend run dev",
     "build": "npm --prefix backend run build && npm --prefix frontend run build",
     "test": "npm --prefix backend test -- --runInBand && npm --prefix frontend run test:unit",
-    "setup:https": "powershell -NoProfile -File scripts/setup-https.ps1"
+    "setup:https": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-https.ps1"
   }
 }

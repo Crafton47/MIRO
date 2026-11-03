@@ -12,6 +12,7 @@ import { getRedisClient, getRedisMode } from './config/redis.js';
 import { prisma } from './config/prisma.js';
 import { socketServer } from './websocket/socket.server.js';
 import { driverSimulatorService } from './services/simulator/simulator.service.js';
+import { authService } from './services/auth/auth.service.js';
 import { corsOptions, demoEnabled } from './config/security.js';
 import { rateLimit } from './middleware/rateLimit.middleware.js';
 
@@ -95,6 +96,10 @@ app.get('/api/v1/system/status', async (_req, res) => {
     socketStatus = 'disconnected';
   }
 
+  const demoToken = demoEnabled
+    ? authService.generateToken('11111111-1111-4000-a000-000000000001', 'dashboard@miro.local', 'RIDER')
+    : undefined;
+
   res.status(200).json({
     success: true,
     data: {
@@ -103,6 +108,7 @@ app.get('/api/v1/system/status', async (_req, res) => {
       postgres: postgresStatus,
       socket: socketStatus,
       simulator: driverSimulatorService.getStatus(),
+      token: demoToken,
     },
   });
 });

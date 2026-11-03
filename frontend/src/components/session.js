@@ -331,13 +331,14 @@ function showAuthModal() {
 
           <button type="submit" class="btn-driver-cta primary auth-submit-btn">Sign in</button>
 
+          ${import.meta.env?.DEV ? `
           <div class="auth-demo-chips">
-            <span class="auth-demo-label">Quick demo accounts:</span>
+            <span class="auth-demo-label">Local demo accounts only:</span>
             <div class="auth-chips-row">
               <button type="button" class="auth-chip" data-email="rider@miro.local" data-pass="password123">Rider (Rohan)</button>
               <button type="button" class="auth-chip" data-email="driver1@miro.local" data-pass="password123">Driver D1 (Debashis)</button>
             </div>
-          </div>
+          </div>` : ''}
 
           <div class="auth-footer-nav">
             <span>Don’t have an account?</span>

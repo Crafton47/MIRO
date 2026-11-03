@@ -35,8 +35,12 @@ describe('Express REST API Endpoints', () => {
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 
-  test('demo simulator is disabled by default', async () => {
+  test('demo simulator route reflects DEMO_MODE configuration', async () => {
     const res = await request(app).get('/api/v1/simulator/status');
-    expect(res.status).toBe(404);
+    if (process.env.DEMO_MODE === 'true') {
+      expect(res.status).toBe(200);
+    } else {
+      expect(res.status).toBe(404);
+    }
   });
 });

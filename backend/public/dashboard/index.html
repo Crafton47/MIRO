@@ -493,8 +493,8 @@
   <div class="controls-bar">
     <div class="control-group">
       <span class="control-label">📍 Rider Pickup:</span>
-      <input type="number" step="0.0001" id="riderLat" class="input-coord" value="37.7749" placeholder="Latitude">
-      <input type="number" step="0.0001" id="riderLng" class="input-coord" value="-122.4194" placeholder="Longitude">
+      <input type="number" step="0.0001" id="riderLat" class="input-coord" value="22.5646" placeholder="Latitude">
+      <input type="number" step="0.0001" id="riderLng" class="input-coord" value="88.3510" placeholder="Longitude">
       <button class="btn btn-secondary" id="btnUpdateRider" onclick="updateRiderFromInputs()">Set Pin</button>
       <button class="btn btn-match" id="btnTestMatch" onclick="runMatching()">⚡ Test Matching (Top 8)</button>
     </div>
@@ -632,8 +632,9 @@
     let riderMarker = null;
     let driverMarkers = {};
     let driverH3Polygons = {};
-    let riderLat = 37.7749;
-    let riderLng = -122.4194;
+    let riderLat = 22.5646;
+    let riderLng = 88.3510;
+    let authToken = null;
     let matchedDriverIds = new Set();
     let isSimulatorRunning = false;
     let maxLogs = 50;
@@ -642,13 +643,13 @@
     // Driver registry (D1..D8)
     const drivers = {
       '00000000-0000-4000-a000-000000000001': { code: 'D1', name: 'Real Driver (D1)', isReal: true, status: 'OFFLINE', lat: null, lng: null, h3: '-', speed: 0, heading: 0, dist: null },
-      '00000000-0000-4000-a000-000000000002': { code: 'D2', name: 'Simulated Driver D2', isReal: false, status: 'ONLINE', lat: 37.7749, lng: -122.4084, h3: '-', speed: 30, heading: 90, dist: null },
-      '00000000-0000-4000-a000-000000000003': { code: 'D3', name: 'Simulated Driver D3', isReal: false, status: 'ONLINE', lat: 37.7788, lng: -122.4162, h3: '-', speed: 35, heading: 141, dist: null },
-      '00000000-0000-4000-a000-000000000004': { code: 'D4', name: 'Simulated Driver D4', isReal: false, status: 'ONLINE', lat: 37.7826, lng: -122.4211, h3: '-', speed: 20, heading: 193, dist: null },
-      '00000000-0000-4000-a000-000000000005': { code: 'D5', name: 'Simulated Driver D5', isReal: false, status: 'ONLINE', lat: 37.7796, lng: -122.4293, h3: '-', speed: 25, heading: 244, dist: null },
-      '00000000-0000-4000-a000-000000000006': { code: 'D6', name: 'Simulated Driver D6', isReal: false, status: 'ONLINE', lat: 37.7727, lng: -122.4239, h3: '-', speed: 30, heading: 296, dist: null },
-      '00000000-0000-4000-a000-000000000007': { code: 'D7', name: 'Simulated Driver D7', isReal: false, status: 'ONLINE', lat: 37.7671, lng: -122.4211, h3: '-', speed: 35, heading: 347, dist: null },
-      '00000000-0000-4000-a000-000000000008': { code: 'D8', name: 'Simulated Driver D8', isReal: false, status: 'ONLINE', lat: 37.7662, lng: -122.4125, h3: '-', speed: 20, heading: 39, dist: null },
+      '00000000-0000-4000-a000-000000000002': { code: 'D2', name: 'Simulated Driver D2', isReal: false, status: 'ONLINE', lat: 22.5646, lng: 88.3570, h3: '-', speed: 30, heading: 0, dist: null },
+      '00000000-0000-4000-a000-000000000003': { code: 'D3', name: 'Simulated Driver D3', isReal: false, status: 'ONLINE', lat: 22.5693, lng: 88.3547, h3: '-', speed: 30, heading: 51, dist: null },
+      '00000000-0000-4000-a000-000000000004': { code: 'D4', name: 'Simulated Driver D4', isReal: false, status: 'ONLINE', lat: 22.5704, lng: 88.3496, h3: '-', speed: 30, heading: 103, dist: null },
+      '00000000-0000-4000-a000-000000000005': { code: 'D5', name: 'Simulated Driver D5', isReal: false, status: 'ONLINE', lat: 22.5672, lng: 88.3456, h3: '-', speed: 30, heading: 154, dist: null },
+      '00000000-0000-4000-a000-000000000006': { code: 'D6', name: 'Simulated Driver D6', isReal: false, status: 'ONLINE', lat: 22.5620, lng: 88.3456, h3: '-', speed: 30, heading: 206, dist: null },
+      '00000000-0000-4000-a000-000000000007': { code: 'D7', name: 'Simulated Driver D7', isReal: false, status: 'ONLINE', lat: 22.5588, lng: 88.3496, h3: '-', speed: 30, heading: 257, dist: null },
+      '00000000-0000-4000-a000-000000000008': { code: 'D8', name: 'Simulated Driver D8', isReal: false, status: 'ONLINE', lat: 22.5599, lng: 88.3547, h3: '-', speed: 30, heading: 309, dist: null },
     };
 
     // Haversine formula in km
@@ -950,9 +951,11 @@
 
       try {
         if (!isSimulatorRunning) {
+          const headers = { 'Content-Type': 'application/json' };
+          if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
           const res = await fetch('/api/v1/simulator/start', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify({ centerLat: riderLat, centerLng: riderLng, intervalMs: 2500 })
           });
           const json = await res.json();
@@ -962,7 +965,9 @@
             addLog('d-sys', '[SIMULATOR] Started 7 simulated drivers (D2..D8) around pickup.');
           }
         } else {
-          const res = await fetch('/api/v1/simulator/stop', { method: 'POST' });
+          const headers = {};
+          if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+          const res = await fetch('/api/v1/simulator/stop', { method: 'POST', headers });
           const json = await res.json();
           if (json.success) {
             isSimulatorRunning = false;
@@ -970,7 +975,7 @@
             addLog('d-sys', '[SIMULATOR] Stopped simulator.');
           }
         }
-        fetchSystemStatus();
+        await fetchSystemStatus();
       } catch (e) {
         addLog('d-err', `[SIMULATOR] Error: ${e.message}`);
       } finally {
@@ -985,6 +990,7 @@
         const json = await res.json();
         if (json.success) {
           const s = json.data;
+          if (s.token) authToken = s.token;
           
           // Redis dot
           const dotRedis = document.getElementById('dotRedis');
@@ -1009,8 +1015,16 @@
     }
 
     // Connect to Backend Socket.IO
+    let socket = null;
     function initSocket() {
-      const socket = io();
+      if (socket) {
+        socket.disconnect();
+      }
+      const opts = {};
+      if (authToken) {
+        opts.auth = { token: authToken };
+      }
+      socket = io(opts);
 
       socket.on('connect', () => {
         document.getElementById('dotSocket').className = 'dot online';
@@ -1024,8 +1038,9 @@
 
       // 1. High-Frequency Location Updates
       socket.on('location:update', (data) => {
-        if (!data || !data.driverId) return;
-        const id = data.driverId;
+        if (!data) return;
+        const id = data.driverId || data.entityId;
+        if (!id) return;
 
         // If newly discovered driver
         if (!drivers[id]) {
@@ -1082,15 +1097,15 @@
     }
 
     // Initialize application on load
-    window.addEventListener('DOMContentLoaded', () => {
+    window.addEventListener('DOMContentLoaded', async () => {
       initMap();
       updateDistances();
       for (const id in drivers) {
         updateDriverMarker(id);
       }
       renderDriverTable();
+      await fetchSystemStatus();
       initSocket();
-      fetchSystemStatus();
 
       // Poll system health every 5s
       setInterval(fetchSystemStatus, 5000);

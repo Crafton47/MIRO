@@ -6,11 +6,12 @@ async function runStandaloneSimulator() {
   logger.info('🤖 Starting Standalone 7-Driver Simulator...');
   logger.info('==================================================');
 
-  // San Francisco downtown default coordinates
-  const centerLat = process.env.CENTER_LAT ? parseFloat(process.env.CENTER_LAT) : 37.7749;
-  const centerLng = process.env.CENTER_LNG ? parseFloat(process.env.CENTER_LNG) : -122.4194;
-  const intervalMs = process.env.INTERVAL_MS ? parseInt(process.env.INTERVAL_MS, 10) : 2000;
+  // Default coordinates centered near Kolkata MVP test region (Esplanade)
+  const centerLat = process.env.CENTER_LAT ? parseFloat(process.env.CENTER_LAT) : 22.5646;
+  const centerLng = process.env.CENTER_LNG ? parseFloat(process.env.CENTER_LNG) : 88.3510;
+  const intervalMs = process.env.INTERVAL_MS ? parseInt(process.env.INTERVAL_MS, 10) : 3000;
 
+  process.env.DEMO_MODE = 'true';
   await driverSimulatorService.start(centerLat, centerLng, intervalMs);
 
   process.on('SIGINT', () => {
